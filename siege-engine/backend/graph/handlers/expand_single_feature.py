@@ -62,11 +62,21 @@ from backend.graph.prompts.expand_single_feature import (
     render_user_prompt,
 )
 from backend.graph.reducer import append_event
-from backend.graph.requirements import get_reqs_node
 from backend.models.input_document import InputDocument
 from backend.models.node import Node
 from backend.models.pending_instruction import PendingInstruction
 from backend.pipeline import queue as pipeline_queue
+
+
+def get_reqs_node(session, project_id: str) -> Node | None:
+    """Inlined from backend.graph.requirements (now deleted)."""
+    return session.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "reqs",
+        )
+    ).scalar_one_or_none()
+
 
 logger = logging.getLogger(__name__)
 

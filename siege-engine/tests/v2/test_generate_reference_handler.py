@@ -33,7 +33,7 @@ from backend.models.telemetry import GenerationTelemetry
 
 @pytest.fixture(autouse=True)
 def _fast_cli_retry_backoff(monkeypatch):
-    import backend.graph.handlers.feature_expansion as _handler_mod
+    import backend.graph.handlers._bootstrap_generation as _handler_mod
 
     monkeypatch.setattr(
         _handler_mod,
@@ -101,7 +101,7 @@ def _patch_cli(monkeypatch, return_value: str = _VALID_REFERENCE_XML):
     # The run_parse_validate_loop lives in _bootstrap_generation and
     # imports _call_cli_with_transient_retry from feature_expansion;
     # its cli_manager is what we need to patch.
-    import backend.graph.handlers.feature_expansion as _fe_mod
+    import backend.graph.handlers._bootstrap_generation as _fe_mod
     from backend.cli.manager import GenerationResult
 
     calls: list[dict] = []
@@ -120,7 +120,7 @@ def _patch_cli(monkeypatch, return_value: str = _VALID_REFERENCE_XML):
 
 
 def _patch_cli_sequence(monkeypatch, return_values: list[str]):
-    import backend.graph.handlers.feature_expansion as _fe_mod
+    import backend.graph.handlers._bootstrap_generation as _fe_mod
     from backend.cli.manager import GenerationResult
 
     calls: list[dict] = []
@@ -332,7 +332,7 @@ class TestParseValidateRetry:
 
     def test_exhausts_retries_and_raises(self, shared_session_factory, seeded_ref, monkeypatch):
         project_id, ref_id = seeded_ref
-        from backend.graph.handlers.feature_expansion import MAX_PARSE_RETRIES
+        from backend.graph.handlers._bootstrap_generation import MAX_PARSE_RETRIES
 
         _patch_cli_sequence(
             monkeypatch,

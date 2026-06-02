@@ -29,12 +29,28 @@ from backend.graph.handlers.expand_single_feature import (
 )
 from backend.graph.ids import Kind, mint
 from backend.graph.reducer import append_event
-from backend.graph.requirements import bootstrap_reqs_node
 from backend.models import InputDocument, Project
 from backend.models.graph_event import GraphEvent
 from backend.models.job import Job
 from backend.models.node import Edge, Node, StalenessLedger
 from backend.models.pending_instruction import PendingInstruction
+
+
+def bootstrap_reqs_node(session, project_id: str) -> str:
+    """Inlined from the deleted backend.graph.requirements module.
+
+    The test only needs to create a reqs Node row for the project so
+    the handler's downstream "ensure a reqs edge exists" logic has
+    something to point at.
+    """
+    node_id = mint(session, Kind.REQS)
+    append_event(
+        session,
+        project_id,
+        ev.NodeCreated(node_id=node_id, tier="reqs", kind="domain", name="Reqs"),
+    )
+    return node_id
+
 
 _VALID_OUTPUT = (
     "<features>"

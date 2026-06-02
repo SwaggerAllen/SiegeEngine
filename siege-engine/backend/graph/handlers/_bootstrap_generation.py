@@ -43,6 +43,7 @@ Example caller binding (feature-expansion):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import Literal
@@ -50,19 +51,53 @@ from typing import Literal
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend.cli.config import CliInvocationConfig
-from backend.cli.manager import CliError, GenerationResult
+from backend.cli.manager import CliError, CliTransientError, GenerationResult, cli_manager
 from backend.database import SessionLocal
-from backend.graph.handlers.feature_expansion import (
-    CLI_TOOLS,
-    MAX_PARSE_RETRIES,
-    _call_cli_with_transient_retry,
-)
 from backend.graph.parsers.validators import ValidationError
 from backend.graph.parsers.xml_sections import ParseError, TagNode, extract_tag_tree
 from backend.models.job import Job
 from backend.pipeline.queue import current_job_id_var
 
 logger = logging.getLogger(__name__)
+
+# Disable all CLI tools — refs (the lone surviving bootstrap tier)
+# generates pure text, no file I/O.
+CLI_TOOLS = '""'
+
+# Parse-validate retry budget. The first attempt plus this many
+# additional retries means up to MAX_PARSE_RETRIES + 1 total LLM
+# calls per user-requested generation. Keep small so runaway
+# broken output doesn't silently blow the token budget.
+MAX_PARSE_RETRIES = 3
+
+# Transient-CLI-error retry budget. Separate from the parse-validate
+# loop: this retries when the CLI itself fails (upstream Anthropic
+# 5xx, process crash, etc.) — i.e. we never got usable output.
+CLI_MAX_TRANSIENT_RETRIES = 3
+CLI_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (2.0, 4.0, 8.0)
+
+
+async def _call_cli_with_transient_retry(**kwargs):  # type: ignore[no-untyped-def]
+    """Invoke ``cli_manager.generate_with_usage`` with retry on transient errors."""
+    last_exc: CliTransientError | None = None
+    for attempt_idx in range(CLI_MAX_TRANSIENT_RETRIES + 1):
+        try:
+            return await cli_manager.generate_with_usage(**kwargs)
+        except CliTransientError as exc:
+            last_exc = exc
+            if attempt_idx >= CLI_MAX_TRANSIENT_RETRIES:
+                break
+            backoff = CLI_RETRY_BACKOFF_SECONDS[attempt_idx]
+            logger.warning(
+                "CLI call failed transiently on attempt %d/%d, retrying in %.1fs: %s",
+                attempt_idx + 1,
+                CLI_MAX_TRANSIENT_RETRIES + 1,
+                backoff,
+                str(exc)[:500],
+            )
+            await asyncio.sleep(backoff)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _resolve_draft_batch_id() -> str:

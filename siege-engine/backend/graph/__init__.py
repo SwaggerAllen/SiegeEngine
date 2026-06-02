@@ -8,57 +8,21 @@ projection ORM models directly.
 Importing this package also registers the v2 job handlers:
   * ``v2.apply_instructions``
   * ``v2.rename_rewrite``
-  * ``v2.generate_feature_expansion``
-  * ``v2.mint_features``
-  * ``v2.generate_requirements``
-  * ``v2.mint_requirements``
-  * ``v2.generate_sysarch``
-  * ``v2.mint_sysarch``
-  * ``v2.generate_comparch``
-  * ``v2.mint_comparch``
-  * ``v2.apply_top_level_policies``
-  * ``v2.apply_component_local_policies``
-  * ``v2.generate_subcomparch``
-  * ``v2.mint_subcomparch``
+  * ``v2.expand_single_feature``
   * ``v2.generate_reference``
-  * ``v2.generate_impl``
-  * ``v2.generate_fanin``
+
+The per-tier generation + mint + review handlers retired with the
+read-side rewrite; per-tier work happens in Claude Code skills now.
+References are the lone surviving tier with a backend write surface
+during the refs+vocab transition.
 """
 
 from backend.graph import queue as _queue
-from backend.graph.handlers import comparch_generation as _comparch_gen_handler
-from backend.graph.handlers import comparch_mint as _comparch_mint_handler
 from backend.graph.handlers import expand_single_feature as _expand_single_feature_handler
-from backend.graph.handlers import fanin_generation as _fanin_gen_handler
-from backend.graph.handlers import feature_expansion as _feature_expansion_handler
-from backend.graph.handlers import feature_mint as _feature_mint_handler
 from backend.graph.handlers import generate_reference as _generate_reference_handler
-from backend.graph.handlers import impl_generation as _impl_gen_handler
-from backend.graph.handlers import policy_application_local as _policy_app_local_handler
-from backend.graph.handlers import policy_application_top as _policy_app_top_handler
 from backend.graph.handlers import rename_rewrite as _rename_rewrite_handler
-from backend.graph.handlers import requirements_generation as _requirements_gen_handler
-from backend.graph.handlers import requirements_mint as _requirements_mint_handler
-from backend.graph.handlers import subcomparch_generation as _subcomparch_gen_handler
-from backend.graph.handlers import subcomparch_mint as _subcomparch_mint_handler
-from backend.graph.handlers import sysarch_generation as _sysarch_gen_handler
-from backend.graph.handlers import sysarch_mint as _sysarch_mint_handler
 
 _queue.register_apply_handler()
 _rename_rewrite_handler.register()
 _expand_single_feature_handler.register()
-_feature_expansion_handler.register()
-_feature_mint_handler.register()
-_requirements_gen_handler.register()
-_requirements_mint_handler.register()
-_sysarch_gen_handler.register()
-_sysarch_mint_handler.register()
-_comparch_gen_handler.register()
-_comparch_mint_handler.register()
-_policy_app_top_handler.register()
-_policy_app_local_handler.register()
-_subcomparch_gen_handler.register()
-_subcomparch_mint_handler.register()
 _generate_reference_handler.register()
-_impl_gen_handler.register()
-_fanin_gen_handler.register()
