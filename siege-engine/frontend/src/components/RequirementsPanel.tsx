@@ -1,110 +1,26 @@
-import { useMemo } from 'react';
-import { useFeatures } from '../hooks/queries/useFeatureQueries';
-import { useRequirements } from '../hooks/queries/useRequirementsQueries';
-import {
-  useApproveMutation,
-  useCancelGenerationMutation,
-  useFeedbackMutation,
-  useResetMutation,
-  useReviewRetryMutation,
-} from '../hooks/mutations/useRequirementsMutations';
-import {
-  BootstrapDraftPanel,
-  type BootstrapPanelLabels,
-} from './BootstrapDraftPanel';
-import { RequirementsListTab } from './RequirementsListTab';
-import { makeRequirementsRenderers } from './xml';
+import { useScopeState } from '../hooks/queries/useScopeState';
+import type { BodyScope } from '../api/siege';
+import { BootstrapDraftPanel } from './BootstrapDraftPanel';
+import { hintForStatus } from './skillHints';
 
 interface Props {
   projectId: string;
 }
 
-const LABELS: BootstrapPanelLabels = {
-  loadingMessage: 'Loading requirements…',
-  loadErrorTitle: 'Failed to load requirements',
-  generatingMessage: 'Generating requirements…',
-  draftHeading: 'Requirements — Draft',
-  feedbackPlaceholder: 'e.g. Add rate limiting, split Auth into two…',
-  readOnlyExplanation:
-    'Further responsibility-layer edits happen on individual responsibility nodes once Phase 10 lands.',
-};
+const SCOPE: BodyScope = { tier: 'requirements', comp_id: 'proj' };
 
-/**
- * Four-state review panel for the project's reqs node. Thin
- * wrapper around :component:`BootstrapDraftPanel` — supplies the
- * requirements-specific labels, data source, mutations, and
- * content renderer map, and defers the entire state machine to
- * the shared shell.
- *
- * The renderer map is built via ``makeRequirementsRenderers`` with
- * a live feature-name map so each ``<responsibility>`` card's
- * "Covers" footer renders ``name (feat_xxxxxxxx)`` for every
- * upstream feature instead of bare IDs. The features query runs
- * with no ``mintPending`` gate — requirements generation is
- * downstream of feature_mint, so by the time a reqs draft exists
- * the feature list is already minted and a single fetch on mount
- * populates the name map without polling.
- */
 export function RequirementsPanel({ projectId }: Props) {
-  const { data, error, isLoading } = useRequirements(projectId);
-  const { data: featuresData } = useFeatures(projectId);
-  const feedbackMutation = useFeedbackMutation(projectId);
-  const approveMutation = useApproveMutation(projectId);
-  const cancelMutation = useCancelGenerationMutation(projectId);
-  const resetMutation = useResetMutation(projectId);
-  const reviewRetryMutation = useReviewRetryMutation(projectId);
-
-  const isBusy =
-    feedbackMutation.isPending ||
-    approveMutation.isPending ||
-    cancelMutation.isPending ||
-    resetMutation.isPending ||
-    reviewRetryMutation.isPending;
-
-  const featureNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const f of featuresData?.features ?? []) {
-      map[f.id] = f.name;
-    }
-    return map;
-  }, [featuresData]);
-
-  const renderers = useMemo(
-    () => makeRequirementsRenderers(featureNames),
-    [featureNames],
-  );
-
+  const { state, draftBody, reviewBody, isLoading, error } = useScopeState(projectId, SCOPE);
   return (
     <BootstrapDraftPanel
-      projectId={projectId}
-      data={data}
+      scopeName="Requirements"
+      tierLabel="requirements"
+      state={state}
+      draftBody={draftBody}
+      reviewBody={reviewBody}
       isLoading={isLoading}
       error={error}
-      labels={LABELS}
-      callbacks={{
-        onFeedback: (f, autoRev) =>
-          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
-        onApprove: (id) => approveMutation.mutate(id),
-        onRetry: () => feedbackMutation.mutate(''),
-        onCancel: () => cancelMutation.mutate(),
-        onReset: () => resetMutation.mutate(),
-        onRetryReview: () => reviewRetryMutation.mutate(),
-        isBusy,
-      }}
-      contentRenderers={renderers}
-      docKind="requirements"
-      extraTabs={({ pendingContent, approvedContent }) => [
-        {
-          id: 'requirements',
-          label: 'Responsibilities',
-          content: (
-            <RequirementsListTab
-              content={pendingContent ?? approvedContent}
-              featureNames={featureNames}
-            />
-          ),
-        },
-      ]}
+      skillHint={hintForStatus('requirements', state?.status, 'proj')}
     />
   );
 }

@@ -1,30 +1,14 @@
-import {
-  BootstrapDraftPanel,
-  type BootstrapPanelLabels,
-} from './BootstrapDraftPanel';
-import {
-  useImplSub,
-  useImplTopLevel,
-} from '../hooks/queries/useImplQueries';
-import {
-  useImplSubApproveMutation,
-  useImplSubCancelGenerationMutation,
-  useImplSubFeedbackMutation,
-  useImplSubResetMutation,
-  useImplSubReviewRetryMutation,
-  useImplTopLevelApproveMutation,
-  useImplTopLevelCancelGenerationMutation,
-  useImplTopLevelFeedbackMutation,
-  useImplTopLevelResetMutation,
-  useImplTopLevelReviewRetryMutation,
-} from '../hooks/mutations/useImplMutations';
-import { implRenderers } from './xml';
+import { useScopeState } from '../hooks/queries/useScopeState';
+import type { BodyScope } from '../api/siege';
+import { BootstrapDraftPanel } from './BootstrapDraftPanel';
+import { hintForStatus } from './skillHints';
 
 interface TopLevelProps {
   kind: 'top-level';
   projectId: string;
   compId: string;
   ownerName: string;
+  phase?: number | null;
 }
 
 interface SubProps {
@@ -33,131 +17,48 @@ interface SubProps {
   parentCompId: string;
   subId: string;
   ownerName: string;
+  phase?: number | null;
 }
 
 type Props = TopLevelProps | SubProps;
 
-function makeLabels(ownerName: string): BootstrapPanelLabels {
-  return {
-    loadingMessage: `Loading ${ownerName} implementation…`,
-    loadErrorTitle: `Failed to load ${ownerName} implementation`,
-    generatingMessage: `Generating ${ownerName} implementation…`,
-    draftHeading: `${ownerName} — Implementation Draft`,
-    feedbackPlaceholder:
-      'e.g. Tighten the sequencing around session rotation; note the race with logout…',
-    // Impl is explicitly NOT frozen after approval (destructive
-    // edit gate only). The BootstrapDraftPanel still shows this
-    // text when the approved-content state renders; we override
-    // the wording to make clear feedback reopens the draft cycle.
-    readOnlyExplanation:
-      'Implementation stays editable after approval. Send feedback at any time to reopen the draft cycle; destructive edits (delete, merge) go through the pending-change queue in Phase 11.',
-  };
-}
-
 /**
- * Four-state review panel for a single implementation node.
+ * Read-only inspection panel for an implementation node.
  *
  * Two shapes share one component:
- * - Top-level (un-fanned-out): scoped by ``(projectId, compId)``
- * - Per-sub: scoped by ``(projectId, parentCompId, subId)``
+ * - Top-level (un-fanned-out): scoped by ``(comp_id, phase?)``
+ * - Per-sub: scoped by ``(parent_id, sub_id, phase?)``
  *
- * The discriminated union on ``kind`` keeps both wired to the
- * right hooks + API layer without touching BootstrapDraftPanel's
- * shape — it just receives the data/mutations and renders.
+ * Impl is phased; ``phase`` defaults to unphased (pre-phasing
+ * artifacts and the v1 schema). The phased dimension is wired
+ * through unchanged so the dashboard can render a specific phase
+ * once the nav links pass one in.
  */
 export function ImplPanel(props: Props) {
-  if (props.kind === 'top-level') {
-    return <ImplPanelTopLevel {...props} />;
-  }
-  return <ImplPanelSub {...props} />;
-}
-
-function ImplPanelTopLevel({
-  projectId,
-  compId,
-  ownerName,
-}: TopLevelProps) {
-  const { data, error, isLoading } = useImplTopLevel(projectId, compId);
-  const feedbackMutation = useImplTopLevelFeedbackMutation(projectId, compId);
-  const approveMutation = useImplTopLevelApproveMutation(projectId, compId);
-  const cancelMutation = useImplTopLevelCancelGenerationMutation(projectId, compId);
-  const resetMutation = useImplTopLevelResetMutation(projectId, compId);
-  const reviewRetryMutation = useImplTopLevelReviewRetryMutation(projectId, compId);
-
-  const isBusy =
-    feedbackMutation.isPending ||
-    approveMutation.isPending ||
-    cancelMutation.isPending ||
-    resetMutation.isPending ||
-    reviewRetryMutation.isPending;
-
+  const scope: BodyScope =
+    props.kind === 'top-level'
+      ? { tier: 'impl', comp_id: props.compId, phase: props.phase ?? null }
+      : {
+          tier: 'impl',
+          parent_id: props.parentCompId,
+          sub_id: props.subId,
+          phase: props.phase ?? null,
+        };
+  const id = props.kind === 'top-level' ? props.compId : props.subId;
+  const { state, draftBody, reviewBody, isLoading, error } = useScopeState(
+    props.projectId,
+    scope,
+  );
   return (
     <BootstrapDraftPanel
-      projectId={projectId}
-      data={data}
+      scopeName={`${props.ownerName} — Implementation`}
+      tierLabel={`${props.ownerName} implementation`}
+      state={state}
+      draftBody={draftBody}
+      reviewBody={reviewBody}
       isLoading={isLoading}
       error={error}
-      labels={makeLabels(ownerName)}
-      callbacks={{
-        onFeedback: (f, autoRev) =>
-          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
-        onApprove: (id) => approveMutation.mutate(id),
-        onRetry: () => feedbackMutation.mutate(''),
-        onCancel: () => cancelMutation.mutate(),
-        onReset: () => resetMutation.mutate(),
-        onRetryReview: () => reviewRetryMutation.mutate(),
-        isBusy,
-      }}
-      contentRenderers={implRenderers}
-    />
-  );
-}
-
-function ImplPanelSub({
-  projectId,
-  parentCompId,
-  subId,
-  ownerName,
-}: SubProps) {
-  const { data, error, isLoading } = useImplSub(projectId, parentCompId, subId);
-  const feedbackMutation = useImplSubFeedbackMutation(projectId, parentCompId, subId);
-  const approveMutation = useImplSubApproveMutation(projectId, parentCompId, subId);
-  const cancelMutation = useImplSubCancelGenerationMutation(
-    projectId,
-    parentCompId,
-    subId,
-  );
-  const resetMutation = useImplSubResetMutation(projectId, parentCompId, subId);
-  const reviewRetryMutation = useImplSubReviewRetryMutation(
-    projectId,
-    parentCompId,
-    subId,
-  );
-
-  const isBusy =
-    feedbackMutation.isPending ||
-    approveMutation.isPending ||
-    cancelMutation.isPending ||
-    resetMutation.isPending ||
-    reviewRetryMutation.isPending;
-
-  return (
-    <BootstrapDraftPanel
-      data={data}
-      isLoading={isLoading}
-      error={error}
-      labels={makeLabels(ownerName)}
-      callbacks={{
-        onFeedback: (f, autoRev) =>
-          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
-        onApprove: (id) => approveMutation.mutate(id),
-        onRetry: () => feedbackMutation.mutate(''),
-        onCancel: () => cancelMutation.mutate(),
-        onReset: () => resetMutation.mutate(),
-        onRetryReview: () => reviewRetryMutation.mutate(),
-        isBusy,
-      }}
-      contentRenderers={implRenderers}
+      skillHint={hintForStatus('impl', state?.status, id)}
     />
   );
 }

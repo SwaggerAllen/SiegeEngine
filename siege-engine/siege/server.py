@@ -22,7 +22,7 @@ For local dev:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,6 +75,10 @@ class ScopeRef(BaseModel):
     parent_id: str | None = None
     sub_id: str | None = None
     phase: int | None = None
+
+
+class GetBodyRequest(ScopeRef):
+    which: Literal["draft", "review"] = "draft"
 
 
 class GetReviewContextRequest(ScopeRef):
@@ -246,7 +250,7 @@ def http_get_state(
 
 @app.post("/api/get-body")
 def http_get_body(
-    req: ScopeRef,
+    req: GetBodyRequest,
     _claims: dict[str, Any] = Depends(_require_token),
 ) -> dict[str, Any]:
     return tools.get_body(
@@ -257,6 +261,7 @@ def http_get_body(
         parent_id=req.parent_id,
         sub_id=req.sub_id,
         phase=req.phase,
+        which=req.which,
     )
 
 

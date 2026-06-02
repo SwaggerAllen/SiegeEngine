@@ -1,20 +1,9 @@
-// FUTURE: MCP server endpoints
-//   /api/projects/:id/refs/:ref/tiers/:tier/info
-//   /api/projects/:id/refs/:ref/tiers/:tier/structure-summary
-//   /api/projects/:id/refs/:ref/tiers/:tier/review-summary
-// (read paths only — reset-all / review-sweep / resume / regen-below
-//  / full-corpus action endpoints are doomed and replaced by CC skills);
-// see docs/migration/mcp-surface.md
+// Read-only tier-ops API — info, batches, review summary, structure
+// summary. The write endpoints (reset-all / review-sweep / resume /
+// regen-below-threshold / full-corpus / exploration-sample) were
+// retired alongside the v3 authoring skills.
 import { z } from 'zod';
 import api from './client';
-
-/**
- * Tier-ops API — bulk reset and bulk AI-review for an entire tier.
- *
- * Wraps `POST /projects/{project_id}/tiers/{tier}/reset-all`,
- * `POST /projects/{project_id}/tiers/{tier}/review-sweep`, and
- * `GET  /projects/{project_id}/tiers/{tier}/info`.
- */
 
 export const TIER_NAMES = [
   'expansion',
@@ -31,9 +20,9 @@ export const TierInfoSchema = z.object({
   tier_name: z.string(),
   node_count: z.number(),
   nodes_with_content: z.number(),
-  // Scopes the Review All / Review summary buttons can act on:
-  // pending drafts count as reviewable even before approval, since
-  // the AI review pass runs against the draft body.
+  // Scopes the review summary can act on: pending drafts count as
+  // reviewable even before approval, since the AI review pass runs
+  // against the draft body.
   reviewable_count: z.number(),
   supports_reset: z.boolean(),
   supports_review: z.boolean(),
@@ -46,97 +35,9 @@ export const TierInfoSchema = z.object({
 });
 export type TierInfo = z.infer<typeof TierInfoSchema>;
 
-const SkipSchema = z.object({
-  scope_ids: z.array(z.string()),
-  status: z.number(),
-  detail: z.unknown(),
-});
-
-export const ResetAllResultSchema = z.object({
-  ok: z.boolean(),
-  tier: z.string(),
-  scopes_total: z.number(),
-  scopes_succeeded: z.number(),
-  scopes_skipped: z.array(SkipSchema),
-  jobs_cancelled: z.number(),
-  jobs_enqueued: z.number(),
-  drafts_discarded: z.number(),
-  nodes_deleted: z.number(),
-});
-export type ResetAllResult = z.infer<typeof ResetAllResultSchema>;
-
-export const ReviewSweepResultSchema = z.object({
-  ok: z.boolean(),
-  tier: z.string(),
-  scopes_total: z.number(),
-  jobs_enqueued: z.number(),
-  scopes_skipped: z.array(SkipSchema),
-});
-export type ReviewSweepResult = z.infer<typeof ReviewSweepResultSchema>;
-
-export const ResumeTierResultSchema = z.object({
-  ok: z.boolean(),
-  tier: z.string(),
-  scopes_total: z.number(),
-  generations_enqueued: z.number(),
-  reviews_enqueued: z.number(),
-  jobs_enqueued: z.number(),
-  scopes_skipped: z.array(SkipSchema),
-});
-export type ResumeTierResult = z.infer<typeof ResumeTierResultSchema>;
-
-export const RegenBelowThresholdResultSchema = z.object({
-  ok: z.boolean(),
-  tier: z.string(),
-  batch_id: z.string().nullable(),
-  threshold: z.number().int(),
-  mode: z.enum(['fresh', 'review']),
-  scopes_total: z.number(),
-  scopes_succeeded: z.number(),
-  scopes_skipped: z.array(SkipSchema),
-  skipped_no_review: z.array(
-    z.object({ scope_ids: z.array(z.string()), reason: z.string() }),
-  ),
-  detail: z.string().optional(),
-});
-export type RegenBelowThresholdResult = z.infer<typeof RegenBelowThresholdResultSchema>;
-
 export async function getTierInfo(projectId: string, tier: TierName): Promise<TierInfo> {
   const r = await api.get(`/projects/${projectId}/tiers/${tier}/info`);
   return TierInfoSchema.parse(r.data);
-}
-
-export async function resetTier(projectId: string, tier: TierName): Promise<ResetAllResult> {
-  const r = await api.post(`/projects/${projectId}/tiers/${tier}/reset-all`);
-  return ResetAllResultSchema.parse(r.data);
-}
-
-export async function reviewSweepTier(
-  projectId: string,
-  tier: TierName,
-): Promise<ReviewSweepResult> {
-  const r = await api.post(`/projects/${projectId}/tiers/${tier}/review-sweep`);
-  return ReviewSweepResultSchema.parse(r.data);
-}
-
-export async function resumeTier(
-  projectId: string,
-  tier: TierName,
-): Promise<ResumeTierResult> {
-  const r = await api.post(`/projects/${projectId}/tiers/${tier}/resume`);
-  return ResumeTierResultSchema.parse(r.data);
-}
-
-export async function regenBelowThreshold(
-  projectId: string,
-  tier: TierName,
-  body: { threshold: number; mode: 'fresh' | 'review' },
-): Promise<RegenBelowThresholdResult> {
-  const r = await api.post(
-    `/projects/${projectId}/tiers/${tier}/regen-below-threshold`,
-    body,
-  );
-  return RegenBelowThresholdResultSchema.parse(r.data);
 }
 
 // ── Review summary (read-only dashboard) ───────────────────────────
@@ -233,31 +134,10 @@ export async function listBatches(
   return BatchListSchema.parse(r.data).batches;
 }
 
-export const BatchResumeResultSchema = z.object({
-  ok: z.boolean(),
-  batch_id: z.string(),
-  requeued: z.number().int(),
-  skipped: z.number().int(),
-  total_in_batch: z.number().int(),
-});
-export type BatchResumeResult = z.infer<typeof BatchResumeResultSchema>;
-
-export async function resumeBatch(
-  projectId: string,
-  batchId: string,
-): Promise<BatchResumeResult> {
-  const r = await api.post(`/projects/${projectId}/batches/${batchId}/resume`);
-  return BatchResumeResultSchema.parse(r.data);
-}
-
 // ── Structure summary (read-only dashboard) ────────────────────────
 
 // Eight tiers: the six BootstrapTierConfig tiers plus fanin and
-// references. Both deliberately don't have Reset / Review-sweep ops
-// (see backend tier_ops_routes module docstring) but get the same
-// metadata visibility. Stays a separate constant from TIER_NAMES
-// so callers asking "which tiers can I reset" get a different
-// answer than "which tiers have a structure summary".
+// references.
 export const STRUCTURE_TIER_NAMES = [
   'expansion',
   'requirements',
