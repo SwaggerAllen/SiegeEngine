@@ -27,20 +27,17 @@ except BaseException as _exc:  # pragma: no cover - env-dependent skip
 
 from datetime import datetime  # noqa: E402
 
-from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from backend.auth.routes import get_current_user  # noqa: E402
-from backend.database import Base, get_db  # noqa: E402
+from backend.database import Base  # noqa: E402
 from backend.graph.batches import (  # noqa: E402
     gaps_in_batch,
     jobs_in_batch,
     list_batches_for_tier,
     mint_batch,
 )
-from backend.main import app  # noqa: E402
 from backend.models import Project, User  # noqa: E402
 from backend.models.batch import Batch  # noqa: E402
 from backend.models.job import Job  # noqa: E402
@@ -210,32 +207,6 @@ class TestGapsInBatch:
         assert len(jobs_in_batch(db, batch_id)) == 3
 
 
-class TestListBatchesEndpoint:
-    def test_list_batches_returns_recent(self, db, engine_and_factory):
-        project_id = _seed_project(db)
-        b1 = mint_batch(db, project_id, op_type="reset_tier", tier="comparch")
-        mint_batch(db, project_id, op_type="reset_tier", tier="impl")
-        db.commit()
-
-        _, factory = engine_and_factory
-
-        def _override_db():
-            s = factory()
-            try:
-                yield s
-            finally:
-                s.close()
-
-        app.dependency_overrides[get_db] = _override_db
-        app.dependency_overrides[get_current_user] = _override_user_admin
-        try:
-            client = TestClient(app)
-            resp = client.get(f"/api/projects/{project_id}/batches", params={"tier": "comparch"})
-            assert resp.status_code == 200
-            body = resp.json()
-            ids = [b["id"] for b in body["batches"]]
-            assert b1 in ids
-            # Filter is exclusive — impl batch must not appear.
-            assert all(b["tier"] == "comparch" for b in body["batches"])
-        finally:
-            app.dependency_overrides.clear()
+# The /batches HTTP endpoint lived in tier_ops_routes.py and went
+# with the per-tier route deletion. The mint/gaps/jobs helpers above
+# still cover the underlying data model.
