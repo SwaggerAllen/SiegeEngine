@@ -35,23 +35,11 @@ from backend.graph.handlers.sysarch_generation import GENERATE_SYSARCH_JOB_TYPE
 from backend.models.job import Job
 from backend.models.node import Node
 
-# Phase 8 — AI self-review job types. Deterministic
-# ``v2.review_<tier>`` naming so the registered handlers and
-# this running-jobs tracker stay in sync without cross-imports.
-# The review job payload always carries ``node_id`` explicitly
-# (unlike generator payloads, which use tier-specific scope
-# keys) so the running-node resolver handles them uniformly.
-REVIEW_JOB_TYPES: frozenset[str] = frozenset(
-    {
-        "v2.review_expansion",
-        "v2.review_requirements",
-        "v2.review_sysarch",
-        "v2.review_comparch",
-        "v2.review_subcomparch",
-        "v2.review_impl",
-        "v2.review_fanin",
-    }
-)
+# Phase 4 follow-up — the per-tier review handlers retired with
+# the rest of the per-tier generation surface; the tracker keeps
+# the empty set so callers that still iterate over it work, and
+# the names are preserved for one release in case of stragglers.
+REVIEW_JOB_TYPES: frozenset[str] = frozenset()
 
 _TIER_JOB_TYPES = frozenset(
     {
@@ -64,7 +52,6 @@ _TIER_JOB_TYPES = frozenset(
         GENERATE_IMPL_JOB_TYPE,
         GENERATE_REFERENCE_JOB_TYPE,
     }
-    | REVIEW_JOB_TYPES
 )
 
 

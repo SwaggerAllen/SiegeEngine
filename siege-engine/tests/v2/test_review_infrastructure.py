@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
 
 import pytest
 
@@ -36,9 +35,7 @@ from backend.graph import events as ev  # noqa: E402
 from backend.graph.broadcast import _node_ids_for_event  # noqa: E402
 from backend.graph.ids import Kind, mint  # noqa: E402
 from backend.graph.reducer import append_event  # noqa: E402
-from backend.graph.running import running_node_ids  # noqa: E402
 from backend.models import Project  # noqa: E402
-from backend.models.job import Job  # noqa: E402
 from backend.models.node import Draft, Node  # noqa: E402
 
 
@@ -169,50 +166,11 @@ class TestBroadcasterMapping:
         assert ids == ()
 
 
-class TestRunningIncludesReview:
-    """``running_node_ids`` includes nodes with active review jobs."""
-
-    def test_running_covers_review_job_by_node_id(self, db, project):
-        cid = mint(db, Kind.COMP)
-        append_event(
-            db,
-            project.id,
-            ev.NodeCreated(node_id=cid, tier="comp", kind="domain", name="C"),
-        )
-        db.add(
-            Job(
-                job_type="v2.review_comparch",
-                payload={"project_id": project.id, "node_id": cid, "draft_id": None},
-                status="running",
-                priority=10,
-                max_retries=0,
-                created_at=datetime.utcnow(),
-            )
-        )
-        db.commit()
-
-        running = running_node_ids(db, project.id)
-        assert cid in running
-
-    def test_running_empty_for_other_statuses(self, db, project):
-        cid = mint(db, Kind.COMP)
-        append_event(
-            db,
-            project.id,
-            ev.NodeCreated(node_id=cid, tier="comp", kind="domain", name="C"),
-        )
-        db.add(
-            Job(
-                job_type="v2.review_comparch",
-                payload={"project_id": project.id, "node_id": cid, "draft_id": None},
-                status="completed",
-                priority=10,
-                max_retries=0,
-                created_at=datetime.utcnow(),
-            )
-        )
-        db.commit()
-        assert cid not in running_node_ids(db, project.id)
+# TestRunningIncludesReview removed: per-tier review handlers + their
+# job types retired with the rest of the per-tier surface. The
+# reducer-level DraftReviewUpdated path stays — drafts can still
+# carry review_text from the historical chain — but no new review
+# jobs are enqueued.
 
 
 class TestBootstrapGetStateReviewFields:
