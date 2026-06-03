@@ -2383,3 +2383,304 @@ phases, split a phase, dropped a phase). Walk primitive:
 `downward_cascade` over the affected `(subcomp, phase)` and
 `(comp, phase)` pairs. Regenerates phased impl + fanin
 bodies whose phase assignments changed.
+
+---
+
+# Part C — Architecture
+
+This part names the technologies that implement the platform
+specified in Part A. Choices follow from Part A's commitments:
+event-sourced state, reactive scheduler driven by pub/sub,
+remote MCP transport, single-instance deployment per
+Catapult instance. Each chapter explains the choice and what
+it brings.
+
+## C.1 Elixir / OTP
+
+The application is built in Elixir on the BEAM. OTP
+provides the concurrency primitives, supervision trees,
+and fault-tolerance model that underpin the reactive
+scheduler, the MCP server, and the dashboard.
+
+The BEAM's soft-realtime scheduling is a good fit for
+Catapult's workload: many concurrent lightweight processes
+each handling one MCP connection or one projection update,
+no thread-per-connection cost, hot code reloading for
+operational convenience.
+
+Supervision trees provide crash isolation by design: a
+failed projection update doesn't take down the MCP server,
+a crashed reducer branch doesn't take down the dashboard,
+and reconciliation on startup rebuilds state from the event
+log regardless of how the system came down.
+
+## C.2 PostgreSQL
+
+Primary data store for everything Catapult persists: event
+log, projections (§A.3.3), entities (§A.9), credentials
+(encrypted), optional snapshots. No second data store for
+operational state — PostgreSQL is the single op store.
+
+Migrations are forward-only. Downgrade raises. Schema
+changes land with explicit Ecto migrations; the migration
+history is the audit trail for "when did this column
+enter the system."
+
+Multi-column constraints PostgreSQL supports (partial unique
+indexes, check constraints with subqueries) are used where
+they encode real invariants — most notably the "at most one
+pending draft per (project, node)" constraint.
+
+The default deployment is a single PostgreSQL instance per
+Catapult instance. Catapult does not multi-tenant the
+database across instances; each Catapult deployment has
+its own PostgreSQL.
+
+## C.3 Commanded
+
+The core domain uses Commanded for command/query
+responsibility segregation and event sourcing.
+
+Aggregates partition by project: each project's command
+processing runs through a `Project` aggregate that owns the
+invariants (single-pending-draft, lobby mutex, valid status
+transitions). Commands fire through MCP write tools (§A.4.3);
+events emit when the aggregate accepts; the reducer (a
+Commanded event handler) applies events to projections.
+
+Commanded gives Catapult:
+
+- Complete audit trail of every action as the event log.
+- Time travel and replay by running events 0..T against a
+  fresh projection.
+- Resumability: a partially-completed reducer pass picks up
+  where it left off when the process restarts.
+- Clean CQRS separation between commands (what happened) and
+  queries (what state looks like).
+
+The Commanded process manager facility is **not used for
+the reactive scheduler** (per §A.3.4 and v3 §C.3.1's
+treatment). The scheduler reacts to state, not events; the
+Commanded event handler that broadcasts on Phoenix.PubSub is
+all the engine borrows from Commanded for that path.
+
+## C.4 Phoenix.PubSub and the reactive scheduler
+
+`Phoenix.PubSub` provides the fast-path notification from
+the reducer to the scheduler. The reducer broadcasts on a
+per-project topic (`"project:<project_id>:committed"`) after
+every successful transaction. The scheduler subscribes to
+every project's topic on startup.
+
+The scheduler is implemented as a `GenServer` per project,
+each maintaining a small in-memory cache of the tier
+declarations and edge instances from the loaded bundle.
+On commit notification, the GenServer:
+
+1. Reads the event payload to determine which tiers'
+   readiness might have changed.
+2. Re-evaluates context walks for the affected scopes.
+3. Computes the new `ready_scopes` row diff.
+4. Issues the inserts and deletes in a single Postgres
+   transaction.
+
+The sweeper runs as a separate process per project, ticking
+every 30-60 seconds. It re-evaluates all enumerable scopes
+regardless of recent events — the consistency floor.
+
+PubSub topics are in-process for single-node deployments and
+automatically distributed across a BEAM cluster if Catapult
+is ever deployed multi-node. The current default is
+single-node.
+
+## C.5 Phoenix and LiveView
+
+The dashboard is a Phoenix LiveView application. Server-
+pushed state changes flow into the UI as reducer commits
+broadcast — the LiveView pages subscribe to the same
+per-project PubSub topics the scheduler does, and
+re-render on each commit.
+
+LiveView is a strong fit because Catapult's dashboard
+exists to show state. There's no client-side workflow,
+no offline-friendly editing — every interaction is
+"read state, render, optionally fire a command back
+through MCP or directly through an authenticated Phoenix
+controller." LiveView's server-rendered model handles
+this with much less complexity than a separate React app
+talking to a backend.
+
+Pages the dashboard exposes:
+
+- **Project list** — the user's projects with read or
+  write access.
+- **Project workspace** — the graph view, the per-scope
+  detail panel (body + review + history), the open-flow
+  sidebar.
+- **Review queue** — pending drafts awaiting human review.
+- **Cohort analytics** (deferred from siege — may or may
+  not ship in v4's initial cut depending on scope; flag
+  this when implementing).
+- **Settings** — collaborator management, bundle switch,
+  OAuth credential management.
+
+## C.6 MCP server
+
+The MCP server is an Elixir module exposing the read and
+write tools from §A.4.2 and §A.4.3 over HTTPS. The
+implementation:
+
+- A Phoenix controller mounted at `/mcp/<project_id>` that
+  handles MCP's JSON-RPC payload.
+- Per-tool handler modules that translate MCP calls into
+  either projection queries (read tools) or command
+  dispatches at the project aggregate (write tools).
+- JWT validation on every request; the per-project access
+  check happens against the `project_collaborators` table.
+
+The MCP transport is implemented from spec; there is no
+mature Elixir MCP library at the time of writing. The
+JSON-RPC + tool-discovery surface is small enough to hand-
+write (a few hundred lines).
+
+CC connects to the server with HTTP keep-alive; tool calls
+are individual JSON-RPC requests over the connection.
+Streaming responses are not required for the current tool
+surface.
+
+## C.7 Oban
+
+Oban (a PostgreSQL-backed job queue for Elixir) handles
+non-orchestration housekeeping:
+
+- Event log compaction (older events to cold storage).
+- Periodic projection rebuild for projects that haven't
+  been touched recently (sanity check against event log).
+- Snapshot maintenance (write a new snapshot every N
+  events; prune snapshots older than the retention floor).
+- Propagation-record cleanup for closed flows.
+- OAuth token refresh.
+
+Oban does **not** run the chain. There are no jobs that
+call LLMs, no jobs that fire `commit_draft` on behalf of
+CC, no jobs that drive flow progression. Workflow lives in
+the agent, not in Oban.
+
+## C.8 Git backend
+
+A clone-per-project pattern: Catapult maintains a bare-ish
+git clone of each project's repo under
+`/var/lib/catapult/repos/<project_id>/`. On every
+`commit_draft` or `commit_review` call, the server:
+
+1. Acquires a per-project mutex on the clone.
+2. Runs `git fetch origin <branch>` (debounced per
+   `(project_id, sha)`).
+3. Reads the body or review file via `git show
+   <sha>:<path>`.
+4. Releases the mutex.
+
+The clone is the only place body content lives on
+Catapult's side. Postgres stores the sha, never the body.
+
+For the `git_commit` generator's downstream code repo,
+Catapult maintains a separate clone per code-repo URL and
+follows the same fetch pattern.
+
+## C.9 libgraph
+
+`libgraph` (Elixir graph library) handles the acyclicity
+checks Catapult enforces:
+
+- **At bundle-load time**, the type-level tier graph (tiers
+  as nodes, edge instances as directed edges) is built and
+  checked for cycles. A bundle with type-level cycles fails
+  to load.
+- **At projection time**, edges declared with
+  `graph_constraint: acyclic` are validated per-instance.
+  A `commit_draft` whose body would introduce a cycle in
+  any acyclic edge instance is rejected.
+
+libgraph's algorithms are well-tested; rolling Catapult's
+own cycle detection would introduce bugs in a
+correctness-critical path.
+
+## C.10 Cytoscape with ELK
+
+The dashboard's graph visualization uses Cytoscape.js with
+the ELK layout extension. The graph view shows nodes
+(scopes), edges (named instances), and (overlay) context-
+walk dashed arrows for inspectability.
+
+LiveView pushes node/edge data to Cytoscape via a small
+LiveView hook; ELK computes layout client-side. Catapult
+does not pre-layout the graph server-side.
+
+## C.11 Observability
+
+- **Telemetry.** Every reducer transaction, every scheduler
+  re-evaluation, every MCP request emits a Telemetry event
+  with project_id, command/tool name, duration, success or
+  error.
+- **Logging.** Structured logs with project_id and event
+  sequence as standard fields.
+- **Event log itself.** The event log is the audit trail
+  for everything that changed; no separate audit log is
+  needed.
+- **Dashboard health page.** A LiveView page surfaces the
+  Catapult instance's health: PostgreSQL connection pool,
+  Oban queue length, scheduler ticker freshness per
+  project, MCP active connection count.
+
+External observability integrations (Prometheus,
+OpenTelemetry, Datadog) are not part of v4; they can be
+added later via Telemetry handlers without spec changes.
+
+## C.12 The local Go CLI
+
+The local CLI is a Go binary distributed via the bootstrap
+script. Its job is narrow:
+
+- **Bootstrap.** Install skills + the bundle into a new
+  project repo; create `catapult.yaml`. Mirror of siege's
+  `scripts/siege-bootstrap.sh`.
+- **Pre-flight validation.** Parse + validate a body file
+  against its tier grammar before commit. Saves a round-
+  trip to the server on grammar errors. Runs entirely
+  locally against a copy of the bundle's grammar files.
+- **Local diagnostics.** "Does Catapult's projection match
+  my local git state?" check, useful when something's
+  gone weird.
+- **Auth setup.** One-time flow that writes the Catapult
+  MCP endpoint URL + JWT into a config file CC reads.
+
+The CLI is a single static binary, ~1000-2000 LOC.
+Distribution: GitHub releases plus a `brew install`-style
+formula. The CLI binary speaks no MCP itself — CC handles
+that directly with Catapult's remote server. The CLI is
+just for the auxiliary local operations.
+
+## C.13 Deployment
+
+A Catapult instance runs as a single Docker container with:
+
+- The Elixir release (Phoenix + Commanded + Oban + scheduler
+  processes + MCP server + dashboard).
+- A persistent volume for the bare-ish project clones.
+- A PostgreSQL connection to a managed Postgres instance.
+
+The default deployment is single-instance. Multi-node BEAM
+clustering is possible but not the v4 target — single-node
+is sufficient for the expected workload and removes a layer
+of complexity.
+
+CI/CD runs Catapult's own tests (the platform invariants,
+the reducer's rebuild-from-zero correctness, the MCP tool
+contract) on every PR; deploy runs on merge to main via
+Docker build + push to the running instance.
+
+## C.14 Licensing
+
+AGPL-3.0-or-later. Same license SiegeEngine uses.
+Forking the bundle is unrestricted; running Catapult as a
+service requires source disclosure under the AGPL terms.
