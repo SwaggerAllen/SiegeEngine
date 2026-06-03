@@ -443,12 +443,11 @@ Field-by-field:
   the per-scope body path and as the lookup key in the
   scheduler's projection. Must be unique within the bundle.
 - **`scope`** — how instances of the tier attach to the graph.
-  Built-in scope expressions are `singleton`, `per(X)` (one
-  per node of tier X), and `child_of(X)` (minted by X's
-  fanout). A bundle may compose these — `per(comp) × phase`
-  for a tier that's per-comp-per-phase — or declare custom
-  scope expressions in a named-predicate escape hatch
-  (§A.2.6).
+  The built-in scope expressions are `singleton`, `per(X)`
+  (one per node of tier X), `child_of(X)` (minted by X's
+  fanout), and the phased variants `per(X) × phase` /
+  `child_of(X) × phase` for tiers that partition per-phase.
+  Bundles use these as-is; the set is closed.
 - **`scope_filter`** (optional) — a predicate further
   restricting which scope-parents the tier attaches to. E.g.
   `kind == domain AND has_edge(fanout_to_sub)`. The platform
@@ -692,15 +691,42 @@ The language appears in exactly four slots:
 - **`graph_constraint`** on an edge — named structural
   invariants (`acyclic`, `no_self_loop`, `tree`).
 
-**Named-predicate escape hatch.** A bundle that needs a
-condition the six operator families can't express declares
-a named predicate; the Catapult instance admin approves the
-name at bundle import, and a per-instance allowlist maps
-names to platform code. The name appears in the bundle as if
-it were a built-in. The bundle itself contains no code. This
-preserves the property "a bundle is learnable in an
-afternoon" while allowing the rare case that genuinely needs
-custom logic.
+**Named predicates as reusable expressions.** A bundle can
+name a predicate it reuses across multiple declarations. The
+bundle's optional `predicates.yaml` registers named entries,
+each of which is a predicate-language expression composed of
+the six operator families:
+
+```yaml
+# bundles/default/predicates.yaml
+predicates:
+  is_domain:           kind == domain
+  is_presentational:   kind == presentational
+  has_subcomps:        count(decomposed_by(subcomp)) > 0
+  awaits_domain_fanin:
+    kind == presentational
+    AND any(domain_parent → target.synthesis_ready)
+```
+
+Once registered, the name is usable anywhere a predicate is
+expected:
+
+```yaml
+tier: presentational_comparch
+scope: per(comp)
+scope_filter: awaits_domain_fanin
+```
+
+Named predicates can reference other named predicates
+(`is_presentational AND count(...) > 0`), letting bundle
+authors build a small vocabulary of reusable patterns. The
+language stays closed — every named predicate is a
+composition of built-in operators, validated at bundle-load
+time. The bundle contains no code; there is no admin-approved
+escape hatch; there is no runtime evaluation of bundle-
+provided functions. Anything the six operator families can't
+express is not expressible in the bundle DSL, which is a
+correctness property the platform leans on.
 
 ### A.2.7 The scheduler as reactive runtime
 
