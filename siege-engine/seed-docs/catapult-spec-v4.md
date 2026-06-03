@@ -889,3 +889,916 @@ tiers the new one drops, the orphaned projection rows stay
 in storage but no longer appear in queries. Most projects
 will run one bundle for their lifetime; switching is an
 escape hatch for experimentation, not a routine operation.
+
+---
+
+## A.3 The reactive engine
+
+A.2 specified the bundle DSL and the scheduler's three rules
+abstractly. This chapter specifies how those rules run on
+Postgres + Commanded + Phoenix.PubSub. The engine has four
+moving parts: the **event log** (append-only history of every
+command's effect), the **reducer** (the function that applies
+events to projections), the **projections** (the read models
+the scheduler queries and the dashboard renders), and the
+**reactive scheduler** (the loop that watches the projection
+and writes the ready-set).
+
+### A.3.1 The event log
+
+Every state change goes through the event log. A command
+issued via MCP (e.g. `CommitDraft`, `ApproveDraft`,
+`OpenFlow`) is validated by a Commanded aggregate against
+the current projection; if accepted, the aggregate emits one
+or more events, which are persisted to the log and then fed
+to the reducer for projection update. The log is the source
+of truth; projections are derived.
+
+Events carry: `event_id` (ULID), `project_id`, `sequence`
+(per-project monotonic), `event_type` (a string like
+`DraftCommitted` / `ReviewWritten` / `Approved`), `aggregate_id`
+(the aggregate instance that emitted), `payload` (a JSON
+object whose shape is per-event-type), `inserted_at`
+(timestamp), and `actor_id` (the user whose command produced
+it). The schema is uniform across all event types; per-type
+shape lives in the payload.
+
+The log is **append-only**. There is no edit, no delete, no
+compaction-by-rewrite. State corrections happen by appending
+corrective events (e.g. `DraftDiscarded`, `ProjectionReset`)
+that the reducer interprets. This is what makes replay
+trivial and makes the event log the audit trail without
+additional machinery.
+
+**Per-project ordering, no cross-project ordering.** The
+sequence number is monotonic per project. Two projects can
+interleave commits without coordination because their
+aggregates and projections are independent.
+
+### A.3.2 The reducer
+
+The reducer is a function `(projection_state, event) →
+new_projection_state`. It's pure — given the same starting
+state and event, it produces the same result every time —
+and it's complete: every event the system can emit has a
+reducer branch. Reducer correctness is the single most
+important invariant in the engine, because every read model
+in the system is its output.
+
+The reducer's branches are organized by event type. Each
+branch knows which projection tables the event touches and
+applies the changes in a single Postgres transaction
+together with the event log insert. This is what makes the
+log + projection pair consistent: either both update or
+neither does.
+
+Some event types fan out to multiple projection updates.
+`ApproveDraft` for a tier with `fanout` edges, for example,
+mints child nodes for each enumerated child in the draft;
+the reducer reads the draft body, parses the fanout
+property, mints child rows in the node projection, and
+writes the edge projection — all in the same transaction.
+The bundle's fanout declaration tells the reducer where in
+the parent's body to look and which tier to mint into; the
+reducer is generic over those parameters.
+
+**Rebuild-from-zero correctness.** A property the platform
+enforces in tests: running the reducer against the full
+event log from sequence 0 produces byte-identical projection
+state to incremental application. Any branch that fails this
+property is a bug. The rebuild is also the platform's
+recovery mechanism — a projection corrupted by operator
+error or by a bug in a now-fixed reducer branch is restored
+by truncating projection tables and replaying.
+
+### A.3.3 Projections
+
+Projections are denormalized read models. They exist solely
+for query efficiency — every projection's content is fully
+recoverable from the event log. The platform writes several
+universal projections; the bundle's tier declarations
+implicitly add per-tier projection columns.
+
+The universal projections:
+
+- **`nodes`** — one row per scope. Columns: `node_id`,
+  `project_id`, `tier`, `scope_key` (JSON of the tier's
+  scope dimensions), `status` (one of `absent`, `drafted`,
+  `reviewed`, `approved`, `stale`), `current_draft_id`,
+  `current_review_id`, `body_sha` (the git sha the body file
+  was committed at), `inserted_at`, `updated_at`. Per-tier
+  field projections live in `nodes.fields` as a JSON column
+  derived from body fields per the tier's `fields:`
+  declaration.
+- **`edges`** — one row per edge instance. Columns:
+  `edge_id`, `project_id`, `edge_name` (the bundle's named
+  instance), `source_node_id`, `target_node_id`,
+  `inserted_at`. The reducer derives edges from body content
+  per the tier's `declared_in` paths.
+- **`fragments`** — one row per authored fragment. Columns:
+  `fragment_id`, `project_id`, `owner_node_id` (the node the
+  fragment is attached to), `kind`, `content`, `author_tier`
+  (the tier whose draft wrote it via `produces:`),
+  `author_node_id`, `inserted_at`.
+- **`drafts`** — draft lifecycle records. Columns:
+  `draft_id`, `project_id`, `node_id`, `body_sha`,
+  `committed_at`, `status` (`pending` / `approved` /
+  `discarded`), `review_id` (the AI review attached to this
+  draft, if any). One node can have at most one `pending`
+  draft at a time.
+- **`reviews`** — review records. Columns: `review_id`,
+  `project_id`, `draft_id`, `score` (per the bundle's review
+  grammar), `findings` (JSON), `body_sha` (the git sha the
+  review file was committed at), `kind` (`ai` or `human`),
+  `inserted_at`.
+- **`ready_scopes`** — the reactive scheduler's output. One
+  row per `(tier, scope_key)` pair currently ready to
+  generate. The agent queries this projection to decide what
+  to draft next.
+- **`staleness`** — per-node staleness markers. A node with
+  a row in this table has had an upstream change since its
+  last approval; its next regen consumes the marker.
+- **`flows`** — active flow records. One row per open flow on
+  a project, with the flow's seed, current walk state, and
+  completion-predicate status.
+
+Per-bundle projections (tier-specific field columns,
+edge-instance-specific projections, fragment-kind-specific
+materialized views) are derived from the bundle's
+declarations at load time. The engine writes generic
+projections; specifics fall out of generic columns + bundle
+semantics.
+
+### A.3.4 The reactive scheduler
+
+The scheduler subscribes to a per-project Phoenix.PubSub
+topic the reducer broadcasts on after every committed event.
+On receive, it runs the three-rule loop from §A.2.7 against
+the current projection: enumerate, evaluate readiness, write
+`ready_scopes`. The writes are diffs — the scheduler reads
+the current `ready_scopes` content, computes the new set,
+inserts rows that appeared and deletes rows that disappeared.
+
+The fast-path response time is bounded by how quickly the
+scheduler can run readiness evaluation against the new
+state. For most events, only a small number of `(tier,
+scope_key)` pairs need re-evaluation — the ones whose
+context-walk dependencies were touched by the event. The
+scheduler uses the bundle's edge declarations to compute the
+affected set; it doesn't re-evaluate every tier on every
+commit.
+
+**The sweeper.** A background loop runs every 30-60 seconds
+(configurable per project) and re-evaluates every enumerable
+`(tier, scope_key)` pair regardless of recent activity. The
+sweeper exists as a consistency floor: if the fast path ever
+misses an update (because of a bug in the affected-set
+computation, a missed pubsub message, a process restart),
+the sweeper catches it within the configured interval.
+
+The sweeper is also what handles "this scope became ready
+because some non-event-driven condition changed" — typically
+not relevant in the current spec but useful as a hedge.
+
+### A.3.5 Replay and recovery
+
+Two operations the engine supports out of the platform:
+
+- **Replay to sequence T.** Useful for debugging "was this
+  scope ready at time T?" The engine reads events 0..T from
+  the log, applies them to a fresh in-memory projection,
+  runs the scheduler against that state, returns the
+  ready-set as of T. No persistent state is touched.
+- **Projection rebuild.** When a projection is suspected
+  corrupted (operator error, reducer-branch bug fix), an
+  admin runs the rebuild operation. The engine creates a
+  shadow set of projection tables, replays the full event
+  log into them, validates against invariants, then atomic-
+  swaps the shadow into place. The project is read-only
+  during the swap.
+
+Rebuild-from-zero correctness (§A.3.2) is what makes both
+operations safe.
+
+### A.3.6 Snapshots
+
+For projects with very long event logs, rebuild becomes
+expensive. The engine supports periodic snapshots — a saved
+projection state at sequence N — so rebuild starts from
+snapshot N and replays from there. Snapshots are taken on a
+configurable cadence (default: every 10,000 events per
+project) and stored alongside the event log.
+
+Snapshots are an optimization, not a source of truth. A
+snapshot whose content disagrees with replay-from-log is a
+bug; the platform's invariant tests catch this in CI.
+
+### A.3.7 What the engine does not do
+
+The engine does not call LLMs, does not orchestrate flows,
+does not enqueue work for an agent to do, and does not push
+notifications to anyone. It reacts to commits and updates
+projections. The agent (Claude Code) is the only thing that
+calls LLMs and the only thing that decides what to do next;
+the engine's job is to make sure the agent has a current,
+correct, fast-to-query picture of project state when it
+asks.
+
+---
+
+## A.4 The agent driver
+
+Claude Code is the only thing that drives generation, runs
+LLM calls, composes bodies, writes files to disk, and
+commits to git. This chapter specifies how CC connects to
+Catapult, what tools it has, and how the commit flow works
+in detail.
+
+### A.4.1 Remote MCP
+
+Catapult exposes an MCP server over HTTPS on the central
+deployment. CC connects via the remote-MCP transport using
+a per-user JWT for authentication. There is no local CC
+subprocess of the Catapult server, no local stdio MCP
+transport — CC opens an HTTPS connection to
+`https://catapult.<domain>/mcp/<project_id>` and talks to
+the Catapult server directly.
+
+The MCP server is the only network surface CC interacts
+with at runtime. The dashboard is a separate Phoenix
+LiveView app served from the same Catapult instance but
+unrelated to the MCP channel; CC does not read or write the
+dashboard.
+
+### A.4.2 Read tools
+
+The MCP server exposes a small set of read tools that query
+Catapult's projections. The bundle's tier set determines
+parts of the shape; the platform vocabulary is:
+
+- **`list_ready_scopes`** — returns rows from the
+  `ready_scopes` projection, optionally filtered by tier or
+  flow. This is CC's primary "what should I work on" query.
+- **`get_scope_state`** — for a `(tier, scope_key)` pair,
+  returns the node row + current draft + current review +
+  body_sha + status flags.
+- **`get_context`** — for a `(tier, scope_key)` pair,
+  evaluates the tier's `context:` walks against the current
+  projection and returns the result, plus the Liquid-rendered
+  prompt template ready for CC to feed to the LLM. This is
+  the tool that replaces siege's `siege.cli get-context`.
+- **`get_handle`** — for a `(tier, scope_key)` pair, returns
+  the handle (fields + named fragments) for downstream
+  walks. Used by CC when assembling context manually.
+- **`get_review_context`** — for a draft, returns the review
+  prompt's rendered Liquid + the original draft body. Used
+  when CC runs the AI review pass.
+- **`get_phase_plan`** — returns the current phase plan
+  projection. Phased flows query this to walk phases in
+  order.
+- **`get_flow_state`** — for an open flow, returns the
+  flow's current walk position, completed scope visits,
+  pending visits.
+- **`list_projects`** — returns the projects the
+  authenticated user has access to.
+
+All read tools are idempotent. Calling them multiple times
+in close succession returns consistent results as of the
+last committed event the server has processed; there's no
+"stale read" surprise.
+
+### A.4.3 Write tools
+
+Write tools fire commands at Commanded aggregates. The
+commands the platform recognizes:
+
+- **`commit_draft`** — CC has written a body file to git,
+  committed, and pushed. CC calls this with `(project_id,
+  tier, scope_key, body_sha)`. The server fetches the branch
+  at `body_sha`, reads the body file, validates against the
+  bundle's grammar, runs the per-tier reducer branch, emits
+  a `DraftCommitted` event. Returns success or a typed
+  validation error.
+- **`commit_review`** — same shape, but for a review file.
+  CC writes the review.md, commits, pushes, then calls this
+  with `(project_id, draft_id, body_sha)`. Server fetches,
+  validates against review grammar, emits `ReviewCommitted`.
+- **`approve_draft`** — `(project_id, draft_id)`. The
+  Commanded aggregate validates that the draft is in
+  `pending` state, that no other approved draft exists for
+  the scope without a discard event in between, and that
+  the bundle's `cardinality` rules on edges the approval
+  produces are satisfied. Emits `DraftApproved` plus fanout
+  events for any child nodes the parent tier mints.
+- **`discard_draft`** — `(project_id, draft_id, reason)`.
+  Marks the draft discarded so a regen can produce a new
+  one. Used when the human reviewer rejects.
+- **`request_regeneration`** — `(project_id, tier,
+  scope_key, feedback)`. Marks the scope's current approved
+  content stale and the scope itself ready for a new draft.
+  Used by the human reviewer when iterating on an approved
+  artifact.
+- **`open_flow`** — `(project_id, flow_name, seed)`. Opens
+  a flow (§A.5). The aggregate validates that no conflicting
+  flow is open per the lobby (§A.8).
+- **`advance_flow`** — `(project_id, flow_id, visit_id)`.
+  Marks a flow's walk as having visited the named scope;
+  the next ready visit shows up in `get_flow_state`.
+- **`close_flow`** — `(project_id, flow_id)`. Closes an
+  open flow. The aggregate validates that the flow's
+  completion predicate is satisfied.
+
+Write tools return either success (with the new event
+sequence) or a typed error. Failures are first-class data CC
+can pattern-match on, not exceptions to recover from.
+
+### A.4.4 The commit flow
+
+A draft commit, end to end:
+
+1. CC queries `get_ready_scopes`, picks a scope to draft.
+2. CC queries `get_context` for that scope. The server
+   evaluates the tier's context walks against the current
+   projection, renders the Liquid prompt template with
+   walk results as variables, returns the rendered prompt.
+3. CC runs the LLM locally. The LLM produces a body
+   conforming to the tier's grammar.
+4. CC writes the body to `<tier>/<scope_path>/body.md` in
+   the local project repo, commits, pushes to the project's
+   git remote.
+5. CC calls `commit_draft` with the new sha.
+6. The server fetches the branch at that sha. Reads the
+   body file. Validates against the bundle's grammar.
+   - If validation fails: the server returns the typed
+     error to CC. CC reads it, decides whether to retry
+     (regenerate with the error as feedback) or surface to
+     the user.
+   - If validation passes: the reducer applies events that
+     update the `nodes` projection (`status: drafted`,
+     `body_sha: <sha>`), the `drafts` projection (new
+     `pending` row), the `fragments` projection (any
+     `produces:` declarations), the `edges` projection (any
+     `declared_in` edge derivations). Phoenix.PubSub fires.
+     The scheduler runs. The agent sees updated
+     `ready_scopes` on its next query.
+
+The whole flow takes one round-trip to the server per
+commit. CC does not poll for the server to confirm; the
+`commit_draft` response is the confirmation.
+
+### A.4.5 Authentication
+
+Per-user JWTs issued via the dashboard's login flow. Each
+project the user has write access to gets a separate JWT
+scope; CC connects to `https://catapult.<domain>/mcp/<project_id>`
+with the JWT in the Authorization header, and the server
+validates the token grants write access to that project.
+
+The server's git fetches use the project's stored GitHub
+OAuth token, which the project owner provides at project
+creation (§A.9). The fetch credential is server-side; CC
+never sees it.
+
+### A.4.6 Concurrency
+
+Only one driver per project at a time. The lobby (§A.8)
+enforces this at the Commanded aggregate level: a write
+command from CC includes an implicit "driver session" the
+server tracks; conflicting commands from a second session
+fail with a typed `LockHeldByOtherSession` error.
+
+The single-driver constraint is what lets the rest of the
+engine assume there are no concurrent writes to the same
+project. Cross-project writes proceed in parallel.
+
+---
+
+## A.5 Flows
+
+A **flow** is a structured way to advance a project's chain
+in response to a specific stimulus: a user-supplied feature
+request, a refactor proposal, an upstream feedback comment.
+Flows are bundle-declared schema deltas — a flow adds
+additional tiers and edges to the bundle's base schema while
+it's active, the reactive engine runs against the merged
+graph, and the flow ends when no more `(tier, scope)` pairs
+are enqueueable.
+
+This chapter specifies the flow mechanism. The default
+bundle's specific flows (feature-request, refactor,
+bug-fix-propagation, downward-propagation,
+upward-propagation) are catalogued in Part B §B.6.
+
+### A.5.1 Flows as schema deltas
+
+Each flow lives at `bundles/<bundle>/flows/<flow-name>/` in
+the bundle directory. The flow directory contains:
+
+- **`flow.yaml`** — the schema delta. Declares the flow's
+  seed shape, any new tiers the flow adds (typically
+  planning tiers), and any new edges that wire the flow's
+  tiers into the base schema.
+- **Prompt files.** Liquid templates for the flow's
+  planning tiers' prompts.
+
+A flow is **not** a state machine. It's a graph delta. When
+a flow opens, the bundle's effective schema becomes
+`base ∪ flow_delta`. The reactive scheduler runs against
+the merged graph; the flow's new tiers and edges participate
+in readiness evaluation exactly the same way base tiers do.
+The flow doesn't have an imperative driver; it advances by
+virtue of the scheduler finding ready scopes in the merged
+graph and the agent generating them.
+
+### A.5.2 Seeds
+
+A flow opens with a **seed** — the input that motivated the
+flow. Different flows take different seed shapes:
+
+- A feature-request flow's seed is prose: the user describes
+  what they want.
+- A refactor flow's seed is a description of the structural
+  change.
+- A bug-fix flow's seed is a defect report.
+- A downward-propagation flow's seed is a re-approval at an
+  upstream tier whose effect needs to propagate.
+- An upward-propagation flow's seed is feedback from a
+  downstream scope that argues against an upstream
+  decision.
+
+Seed shape is bundle-declared per flow. The platform
+validates the seed against the declared shape at `open_flow`
+time.
+
+### A.5.3 Walks
+
+A flow declares a **walk primitive** that determines how
+its planning tiers visit base-schema scopes. Two primitives
+the platform recognizes:
+
+- **`downward_cascade`** — start at the seed's anchor scope,
+  walk downstream edges (typically `fanout` and `dependency`)
+  to enumerate affected scopes, generate a planning artifact
+  per affected scope in dependency order.
+- **`up_then_down`** — start at the seed's anchor scope,
+  walk upstream to the point at which a planning decision
+  has to be made, generate a plan there, then walk down to
+  re-plan affected downstream scopes.
+
+A flow declares which primitive it uses via `invokes:` in
+its `flow.yaml`. Most flows use `downward_cascade`; only
+upward-propagation uses `up_then_down`.
+
+### A.5.4 Planning tiers
+
+Most flows introduce one or more **planning tiers** — tiers
+whose body is a plan-for-this-scope artifact that downstream
+generation reads. A planning tier's scope is `per(target_tier)`
+where target_tier is a base-schema tier the flow visits. The
+planning tier's body is a prompt-rendered plan; downstream
+generation of the target_tier consumes the plan via a
+context walk.
+
+Planning tiers participate in the same review lifecycle as
+base tiers — the plan goes through AI review and human
+approval before downstream generation can consume it.
+
+### A.5.5 Flow completion
+
+A flow ends when no more `(tier, scope)` pairs in the
+merged schema are ready and enqueueable. The platform
+detects this as part of the scheduler loop: when the flow's
+own tiers' ready set is empty and every base-schema scope
+the flow staled has been re-approved or explicitly skipped,
+the flow's completion predicate fires.
+
+The completion predicate is bundle-declared per flow
+(typically as a named predicate in the bundle's
+`predicates.yaml`). When it fires, the platform emits a
+`FlowReadyToClose` event; the agent calls `close_flow` to
+finalize.
+
+### A.5.6 Scaffolding is not a flow
+
+The scaffolding pattern — walk the chain from the input doc
+through every base-schema tier, drafting and reviewing each
+scope in dependency order — is **not** a flow. It's the
+base schema's default behavior with no flow active. The
+agent's `/scaffold` command queries `list_ready_scopes`
+repeatedly and drafts each ready scope until the chain has
+populated end-to-end.
+
+This is why scaffolding doesn't need a `flows/scaffold/`
+directory in the bundle — there's no schema delta; the base
+schema is already what scaffolding walks.
+
+---
+
+## A.6 Review, feedback, approval
+
+Every tier with a `review:` declaration carries a
+draft → AI review → human review → approval lifecycle. This
+chapter specifies the lifecycle and the agent / dashboard
+surfaces that act on it.
+
+### A.6.1 The lifecycle
+
+1. **Draft commit.** CC writes a body, calls `commit_draft`,
+   the server validates + commits. The node enters status
+   `drafted`. The bundle's tier declaration may carry a
+   `review:` flag; if absent, the draft is eligible for
+   direct approval and skips steps 2-3.
+2. **AI review.** With `review:` set, the platform's
+   scheduler marks the draft as needing review. CC sees it
+   in `list_ready_scopes` with tier filter `review`. CC
+   calls `get_review_context`, runs the LLM with the
+   bundle's review prompt template, writes the review.md
+   file, commits, calls `commit_review`. The draft enters
+   status `reviewed`.
+3. **Human review.** The dashboard surfaces the draft +
+   AI review side-by-side. A human reviewer reads the AI
+   review, may apply individual findings as
+   feedback-for-regen (which fires `request_regeneration`)
+   or accept the draft as-is.
+4. **Approval.** Human reviewer (or the project owner)
+   calls `approve_draft` via the dashboard. The aggregate
+   validates the approval is legal (the draft is `pending`,
+   no other approved draft for the scope exists undiscarded,
+   any bundle-declared approval predicates pass). The node
+   enters status `approved`. Downstream readiness queries
+   start seeing this scope as content-bearing.
+
+### A.6.2 AI reviews are advisory
+
+The platform contract is that approval does not depend on
+the AI review having completed or passed. The reviewer's
+score doesn't gate; their findings are suggestions the
+human can apply or ignore. This is what lets reviews run
+asynchronously to approval — the agent can run the review
+in parallel with the human looking at the draft.
+
+A bundle can declare a tier where AI review is mandatory
+by setting `review: { required: true }`. The platform then
+gates `approve_draft` on the review having committed. This
+is bundle policy, not platform policy.
+
+### A.6.3 Findings as structured data
+
+Reviews emit findings in the bundle's review grammar (the
+default bundle's grammar is the structured `<review>` block
+siege uses today, with intro + score + handles-structure +
+architectural-decisions sections). Each finding has an `id`
+the dashboard renders as a clickable apply-as-feedback
+button.
+
+When a user clicks apply-as-feedback on a finding, the
+dashboard fires `request_regeneration` with the finding's
+prose as the feedback payload. The new draft's prompt
+renders `{{ feedback }}` with that text; the LLM
+incorporates the finding.
+
+### A.6.4 Multiple drafts per scope
+
+A scope can have at most one `pending` draft at a time. A
+regen request discards the current pending (emits
+`DraftDiscarded` first) before the new draft commits. The
+draft projection keeps history — every draft a scope has
+ever had, with status and the body sha it referenced —
+which is what makes the per-scope draft history queryable
+for audit and for prior-draft context on regens.
+
+### A.6.5 Approved-content staleness
+
+When an upstream change stales an approved scope (§A.3.4),
+the staleness marker doesn't auto-discard the approval. The
+approved body remains the source of truth for downstream
+queries; the staleness marker is a hint to the reviewer
+that this scope may need regenerating soon. The reviewer
+chooses when to fire `request_regeneration`.
+
+This is what makes propagation incremental rather than
+cascading. A single upstream re-approval doesn't
+automatically destroy every downstream approval; the
+project's drift accumulates as staleness markers until a
+flow or a manual regen consumes them.
+
+---
+
+## A.7 Phased delivery
+
+Some artifacts in a project partition across delivery
+phases: an implementation gets one body per phase the
+component participates in, a fan-in synthesis recomputes per
+phase as the as-built reality changes. The bundle's tier
+declarations name which tiers are phased; this chapter
+specifies how the platform tracks phases.
+
+### A.7.1 Phase as scope dimension
+
+A tier with `phased: true` carries an additional `phase`
+dimension in its scope key. The body file path for a phased
+scope includes the phase: `<tier>/<scope_path>/p<phase>/body.md`.
+Phased tiers in the bundle declare their scope as
+`per(parent_tier) × phase`; the platform recognizes the
+composition and enumerates `(parent, phase)` pairs.
+
+Each phase is an integer ≥ 1. There is no `phase 0`;
+unphased tiers simply don't carry the dimension.
+
+### A.7.2 The phase plan
+
+The phase plan is a projection: `phase_plan` table, one row
+per `(project_id, phase, scope_key)` triple. The rows say:
+"in phase N, the project participates in this scope." The
+plan is computed by a bundle-declared `plan_rule` that takes
+the current `nodes` + `edges` state and produces phase
+assignments.
+
+The default bundle's plan rule (Part B §B.5) assigns
+features to phases based on user choice (the user pins each
+feature to a phase via the dashboard), then propagates phase
+assignments down the chain: a responsibility is in phase N
+if any of its owning features are; a component is in phase
+N if any of its owning responsibilities are; etc. Other
+bundles can declare different plan rules.
+
+The plan recomputes whenever a body that affects assignment
+changes. Plan changes mark phased-tier scopes stale where
+their phase membership changed.
+
+### A.7.3 Phase walking
+
+The agent walks phases via the `get_phase_plan` MCP tool.
+For a phased flow, CC enumerates phases in ascending order,
+queries ready scopes within each phase, drafts them, then
+advances to the next phase when the prior phase's scopes
+have approved.
+
+The bundle can declare a flow that explicitly walks phases
+(`/run_phase N` in the default bundle's skill suite is one);
+the platform's scheduler treats phased tiers the same as
+unphased ones — readiness is per-`(tier, phase, scope_key)`
+triple. The "advance one phase at a time" semantics are
+agent-side workflow.
+
+### A.7.4 Cross-phase delta context
+
+A phased tier's prompt may need to see "what's different in
+this phase from prior phases." The bundle declares this as a
+context walk that compares the current phase's scope to the
+prior phases' state: typically `self.prior_phases →
+target.handle` for the scope's identity across all prior
+phases.
+
+This is plain bundle DSL — there is no special platform
+machinery for cross-phase context. The walk is just a query
+the engine evaluates at `get_context` time.
+
+### A.7.5 Plan-change flow
+
+When the user changes a phase assignment — moves a feature
+from phase 2 to phase 3, splits a phase, drops a phase
+entirely — the plan-change flow opens. The flow's seed is
+the plan diff; its walk visits every scope whose phase
+membership changed and regenerates the affected
+phased-tier bodies in dependency order.
+
+The plan-change flow is one of the default bundle's flows
+(Part B §B.6).
+
+---
+
+## A.8 Lobby
+
+The platform enforces "one driver per project at a time"
+through the **lobby** — a per-project mutex held by an
+active driver session.
+
+### A.8.1 The mutex
+
+When CC opens an MCP connection to a project, the server
+opens a driver session and grants the lobby mutex if it's
+free. The session ID is associated with the JWT; the lobby
+record in Postgres has `(project_id, session_id,
+opened_at)`. The session ID rides on every write command CC
+issues; the Commanded aggregate validates that the session
+ID matches the lobby holder before processing.
+
+A driver session expires after 30 minutes of inactivity
+(configurable per project). Heartbeats from CC extend the
+session. On expiry, the session releases the lobby; a new
+session can claim it.
+
+### A.8.2 Lobby contention
+
+When CC tries to open a session on a project whose lobby is
+held, the connection returns a typed
+`LobbyHeldByOtherSession` error with the holder's session
+ID and opened-at timestamp. CC surfaces this to the user;
+the user can wait, contact the holder, or (if they're the
+project owner) force-release the lobby via the dashboard.
+
+There is no queue. The "wait" pattern is the user retrying
+the connection after the holder finishes; the platform does
+not orchestrate handoffs.
+
+### A.8.3 Read access ignores the lobby
+
+The lobby gates writes only. The dashboard's reads, the
+collaborators' git pulls, the MCP server's read tools are
+all unaffected — many users can read a project's state
+simultaneously. Only the write mutex is exclusive.
+
+---
+
+## A.9 Multi-project and credentials
+
+A Catapult instance hosts multiple projects belonging to
+multiple users. This chapter specifies the project entity,
+how users gain access, and how Catapult handles per-project
+git credentials.
+
+### A.9.1 Projects
+
+A project is a Postgres entity with:
+
+- `project_id` (ULID), `name`, `description`
+- `owner_user_id` — the single user who has write access
+- `git_remote_url` — the URL Catapult fetches from
+- `git_oauth_token_id` — reference to the stored OAuth
+  credential
+- `bundle_path` — relative path under `bundles/` to the
+  active bundle (read from `catapult.yaml` at the project
+  repo root; cached here for fast lookup)
+- `created_at`
+
+A project's bundle is declared at the project repo's
+`catapult.yaml`. The Catapult server reads that file on
+every fetch and updates the cached `bundle_path` if it
+changed.
+
+### A.9.2 Project creation
+
+A new project is created via the dashboard:
+
+1. User logs in.
+2. User clicks "New project," provides name + description +
+   a git remote URL.
+3. User authorizes Catapult to access the git remote via
+   GitHub OAuth (the same flow siege uses today).
+4. Catapult fetches the repo, verifies it contains a
+   `catapult.yaml` and a `bundles/<bundle>/` directory.
+   If not, returns a typed error explaining what's missing.
+5. On success, the project enters the user's project list.
+   The user's first action is typically to start a CC
+   session against the project and run `/scaffold`.
+
+### A.9.3 Collaborators
+
+The project owner can add **collaborators** via the
+dashboard by entering their email or GitHub username.
+Collaborators get read access: they see the project in
+their dashboard, can browse the structured graph, can read
+reviews, can clone the project repo locally via git. They
+cannot drive the chain — calls to write tools from a
+collaborator's JWT return `WriteAccessDenied`.
+
+Collaborators are added one at a time; there are no teams,
+no inherited memberships, no role hierarchy. A project
+either has the owner as the only writer + zero or more
+collaborators as readers, or has just the owner.
+
+The owner can remove a collaborator at any time. Removal
+is immediate; the collaborator's JWT continues to
+authenticate but stops carrying access to the project.
+
+### A.9.4 Credentials
+
+Two credential types per project:
+
+- **Owner's GitHub OAuth token.** Stored encrypted in
+  Postgres, used by the server's git fetcher to clone and
+  pull the project repo. Provided at project creation.
+- **Per-user JWTs.** Issued by the dashboard's login flow.
+  JWTs scope to the user identity; per-project access is
+  checked at command time by looking up the user's role on
+  the project.
+
+There is no third credential type. The platform does not
+manage SSH keys for repo access (the OAuth token covers
+it), does not manage LLM API keys (CC manages its own auth
+with Anthropic), and does not track LLM token usage
+quotas (CC handles its own budget).
+
+---
+
+## A.10 Storage and code delivery
+
+This chapter specifies the storage layout (git and
+Postgres), the fetch semantics that move artifacts from CC's
+local commits to Catapult's projections, and the
+`git_commit` generator that delivers code from the chain
+into a downstream code repository.
+
+### A.10.1 Git: what's in the project repo
+
+The project repo holds:
+
+- **`catapult.yaml`** at the repo root — pins the active
+  bundle directory.
+- **`bundles/<name>/`** — bundle directories. Multiple
+  bundles can coexist; the active one is named in
+  `catapult.yaml`.
+- **`<tier>/<scope_path>/body.md`** — per-scope body files.
+  Path layout is bundle-declared per tier.
+- **`<tier>/<scope_path>/review.md`** — per-scope review
+  files where the scope has been reviewed.
+
+That's the full surface. The repo contains no state files,
+no identity ledgers, no propagation records, no phase plan,
+no batches. All of that lives in Catapult's Postgres,
+derived from the body files via the reducer.
+
+The project's git history is the audit trail for body and
+review changes. Catapult's event log is the audit trail for
+status, approval, and structural changes. The two are
+complementary; neither subsumes the other.
+
+### A.10.2 Postgres: what Catapult stores
+
+The event log + the projections from §A.3.3 + the entities
+from §A.9 + the credentials from §A.9.4. No body content is
+stored in Postgres; every read of a body's content goes via
+a git fetch (typically cached per `(project_id, sha)`).
+
+Postgres tables, summarized:
+
+- **Event log:** `events`
+- **Universal projections:** `nodes`, `edges`, `fragments`,
+  `drafts`, `reviews`, `ready_scopes`, `staleness`, `flows`,
+  `phase_plan`
+- **Entities:** `users`, `projects`, `project_collaborators`,
+  `lobby_holders`, `driver_sessions`
+- **Credentials:** `oauth_tokens` (encrypted)
+- **Snapshots:** `snapshots` (optional, per §A.3.6)
+
+Per-bundle additions (tier-specific fragment kinds, etc.)
+are JSON columns on the universal tables. No schema
+migrations are required to load a new bundle.
+
+### A.10.3 Fetch semantics
+
+Whenever CC pushes a commit to the project's git remote and
+calls a write tool with the new sha, Catapult's MCP handler
+fetches the repo at that sha before running the command.
+The fetch is debounced per `(project_id, sha)` — if two
+write commands carry the same sha (because CC bundled work
+into one commit), the second fetch is a cache hit.
+
+Body and review file contents read during reducer + projection
+update are read from the fetched blob, not from Postgres.
+Postgres stores the sha only; the content is in the git
+object store. This is what makes the body-in-git /
+state-in-Postgres split a clean separation.
+
+### A.10.4 The `git_commit` generator
+
+Some tiers have content that isn't AI-generated prose —
+they're the source code that the chain ultimately produces.
+The platform recognizes a generator type `git_commit` for
+this purpose:
+
+A tier declared with `generator: git_commit` has its body
+populated by reading a file from a downstream code
+repository at a specific committed sha. The bundle declares:
+
+- **`code_repo_url`** — the git remote for the code repo
+  (distinct from the project's design repo where bodies
+  live).
+- **`path_from_handle`** — a Liquid expression evaluated
+  against the tier's handle to produce the file path in
+  the code repo.
+
+When the agent commits source code to the code repo and
+calls `commit_draft` with the new sha, the server fetches
+the code file at that sha, reads its content into the body
+projection, and runs the same lifecycle as any other tier.
+
+This is how the default bundle's `code` tier (Part B §B.1)
+materializes: subcomp implementations get drafted as design
+prose first, then the user (via CC + a separate coding
+agent) writes the actual code in a sibling repo, commits,
+and Catapult reads the committed code into the code tier's
+body.
+
+### A.10.5 No code execution
+
+Catapult never executes the code the chain produces. There
+is no test runner, no build server, no sandbox, no CI
+integration on the Catapult side. The code repo is a
+downstream system; what runs against it is the user's
+responsibility.
+
+This is a deliberate scope choice. Catapult is a design
+memory + reactive reactive-schema engine + agent driver;
+running code is a different product entirely.
