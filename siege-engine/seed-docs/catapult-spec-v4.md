@@ -1802,3 +1802,584 @@ responsibility.
 This is a deliberate scope choice. Catapult is a design
 memory + reactive reactive-schema engine + agent driver;
 running code is a different product entirely.
+
+---
+
+# Part B — Default bundle
+
+The default bundle is Catapult's **graph-of-prompts design
+system for AI code generation**. It takes a prose input
+document describing a software project and produces a
+layered structured model — features, responsibilities,
+components, subcomponents, implementations — through a
+reviewable pipeline that terminates in code committed to a
+downstream repository.
+
+The default bundle ships at `bundles/default/` in a new
+project's repo, materialized at project creation by
+Catapult's bootstrap routine. A user can edit it, fork it,
+or replace it with a different bundle entirely; the
+platform doesn't privilege the default.
+
+This part specifies the default bundle's content. The
+prompts that drive each tier's generation port from the
+predecessor SiegeEngine's per-tier prompts (in siege's
+codebase) to Liquid templates; the porting is part of the
+bootstrap-handoff milestone (§B.2.7).
+
+## B.1 Tier graph
+
+The default bundle declares seven generation tiers, two
+projection-only tiers, and a code-delivery tier. The chain
+descends from extraction (reading the input doc) through
+compression and rotation to leaves at implementation.
+
+### B.1.1 The tier set
+
+- **`feature_expansion`** — extraction tier. Reads the
+  project's input document; produces a `<features>` list
+  with each feature's name and intent prose. One scope per
+  project; `scope: singleton`.
+- **`requirements`** — rotation tier. Reads the features
+  list; produces a list of system-level
+  `<responsibility>` entries, each fulfilling one or more
+  features. One scope per project; `scope: singleton`.
+- **`sysarch`** — compression tier. Reads the
+  responsibilities list; produces a top-level
+  `<components>` list with each component's role,
+  responsibilities, dependencies, domain-parent
+  relationships, and project-level policy declarations.
+  One scope per project; `scope: singleton`.
+- **`comp`** — projection tier. Minted by sysarch's fanout;
+  has no draft of its own. One scope per top-level
+  component; `scope: child_of(sysarch)`.
+- **`comparch`** — compression tier. Reads its comp's
+  handle + the comp's fulfilled resp handles + the comp's
+  dependencies' pubapi fragments; produces the comp's
+  techspec, public/private API surfaces, policies, failure
+  surface, and a subcomponent decomposition. Writes
+  fragments on the comp via `produces:`. One scope per
+  comp; `scope: per(comp)`.
+- **`subcomp`** — projection tier. Minted by comparch's
+  fanout. One scope per subcomponent.
+- **`subcomparch`** — leaf articulation tier. Reads its
+  subcomp's handle + its parent comp's handle + cross-
+  subcomponent dependency handles; produces typed API
+  signatures, internal design, and any subcomponent-local
+  policies. One scope per subcomp.
+- **`impl`** — design-of-implementation tier. Reads its
+  subcomparch's handle + project-wide sysarch sections +
+  related features; produces implementation prose ready for
+  a coding agent to write code from. **Phased**: one body
+  per `(subcomp, phase)` pair.
+- **`fanin`** — synthesis tier. Aggregates a domain
+  component's subcomponents' as-built handles; produces a
+  bottom-up component-level summary that presentational
+  consumers of the domain read. **Phased** + **`generator:
+  synthesis`**. One scope per domain comp per phase.
+- **`code`** — code delivery tier. `generator: git_commit`.
+  Reads the impl handle; pulls actual source from a sibling
+  code repo via the `git_commit` mechanism (§A.10.4). One
+  scope per impl per phase.
+
+Plus the platform-recognized `policy` tier (a node kind
+sysarch fans out for project-wide policies; no draft of its
+own, just a target for `policy_application` edges) and the
+`vocab` tier (project glossary terms extracted during
+feature_expansion).
+
+### B.1.2 Foundation components
+
+The default bundle's structural rule: every component
+scope must have a `foundation` component as a structural
+sibling. Foundation components hold cross-cutting
+infrastructure (data persistence, logging, error reporting)
+that other components depend on. The bundle declares
+foundation as a `kind` value on the `comp` tier; sysarch's
+fanout enforces "at least one foundation comp per project."
+
+Foundation components have implications downstream:
+foundation subcomparchs see their parent's policies +
+techspec but not cross-component dependencies (because
+foundation is leaf-most in the dependency graph), and
+foundation impls run earliest in phase ordering.
+
+### B.1.3 Domain vs presentational
+
+Components carry a `kind` field: `domain` or
+`presentational`. Domain components implement
+domain-modeled responsibilities; presentational components
+implement user-facing surfaces that consume domain
+components via the `domain_parent` edge.
+
+The fan-in tier synthesizes domain components' subcomp
+handles bottom-up; presentational components' comparch
+reads its domain parents' fan-in handles as context. This
+is how the chain handles the
+"presentational depends on as-built domain" pattern
+without forcing top-down design of the presentational
+surface upfront.
+
+### B.1.4 Edge instances
+
+The default bundle declares five edge instances against the
+platform's edge types:
+
+- **`fulfills`** — `type: reference`. From `comp` to `resp`,
+  declared in `sysarch.draft.components[].responsibilities[].@id`.
+  Cardinality: every resp is fulfilled by exactly one comp;
+  every comp fulfills at least one resp.
+- **`dependency`** — `type: dependency`. From `comp` to
+  `comp` and from `subcomp` to `subcomp`. Declared in
+  `comp.draft.dependencies[].@to` and
+  `comparch.draft.sub_dependencies[]`. Graph constraint:
+  `acyclic`, `no_self_loop`.
+- **`domain_parent`** — `type: reference`. From
+  presentational `comp` to one or more domain `comp`s.
+  Declared in `sysarch.draft.components[].domain_parents[].@to`.
+- **`decomposition`** — `type: fanout`. Cross-tier; emitted
+  by sysarch (comp → resp via fulfills' inverse), by
+  comparch (subcomp → resp via the per-subcomp `<owns>`
+  block), and by feature_expansion (resp → feat via
+  requirements' grammar).
+- **`policy_application`** — `type: policy_application`.
+  From `policy` to `comp` or `subcomp`. Declared in
+  `sysarch.draft.policies[].applies_to[]` and
+  `comparch.draft.policies[].applies_to[]`.
+
+### B.1.5 Fragment kinds
+
+The default bundle's fragment kinds:
+
+- **`techspec`** — runtime, persistence, write-path,
+  concurrency, testing, deploy, technologies. Owned by
+  `comp` (project-wide; written by sysarch on the project's
+  proj-comp scope) and by `subcomp` (component-level;
+  written by comparch on each subcomp via `produces:`).
+- **`pubapi`** — public API surface. Owned by `comp`
+  (written by comparch) and by `subcomp` (written by
+  subcomparch).
+- **`privapi`** — private API surface. Owned by `subcomp`,
+  written by subcomparch.
+- **`policies`** — applied policies (component-level or
+  subcomponent-level). Owned by `comp` and `subcomp`,
+  written by the corresponding arch tier.
+- **`failure_surface`** — failure mode catalogue. Owned by
+  `comp` and `subcomp`, written by the corresponding arch
+  tier.
+
+Fragment kinds are a closed vocabulary in the bundle.
+Adding a new kind is a bundle edit.
+
+## B.2 Per-tier prompts
+
+Each generation tier has a Liquid prompt template at
+`prompts/<tier>.md.liquid` and (for reviewed tiers) a review
+prompt at `prompts/review/<tier>.md.liquid`. The prompts
+port verbatim from SiegeEngine's `siege/prompts/<tier>.md`
+files — the prompts the legacy chain has been iterating on
+since the start of the project.
+
+### B.2.1 Port mechanics
+
+The siege prompts today use Python f-string substitution
+against a per-tier context dict (see CLAUDE.md's "per-tier
+context bundles" section). The port to Liquid:
+
+1. Replace each `{context_var}` with `{{ context_var }}`.
+2. Replace each `{for x in xs:} ... {endfor}` (where siege
+   uses informal loops) with `{% for x in xs %} ... {% endfor %}`.
+3. Replace each `{if condition:} ... {endif}` with
+   `{% if condition %} ... {% endif %}`.
+4. Map siege's context-dict keys 1:1 to Liquid variables
+   that the bundle's `context:` walks produce.
+
+The semantics don't change. A prompt that produced a
+sysarch body in siege today produces the same sysarch body
+through Catapult's Liquid evaluation.
+
+### B.2.2 Generation prompts
+
+One Liquid template per generation tier:
+
+- `prompts/feature_expansion.md.liquid`
+- `prompts/requirements.md.liquid`
+- `prompts/sysarch.md.liquid`
+- `prompts/comparch.md.liquid`
+- `prompts/subcomparch.md.liquid`
+- `prompts/impl.md.liquid`
+- `prompts/fanin.md.liquid`
+
+Each renders against a Liquid context derived from the
+tier's `context:` walks (§A.2.9). For example, comparch's
+template receives `parent` (the comp handle), `fulfills`
+(the comp's fulfilled resp handles), `dependencies` (the
+comp's dependencies' pubapi fragments), `domain_parents`
+(the comp's domain parents' synthesis handles where the
+comp is presentational), and `prior_review` (when the
+generation is a regen with prior review attached).
+
+### B.2.3 Review prompts
+
+One review template per reviewed tier:
+
+- `prompts/review/feature_expansion.md.liquid`
+- `prompts/review/requirements.md.liquid`
+- `prompts/review/sysarch.md.liquid`
+- `prompts/review/comparch.md.liquid`
+- `prompts/review/subcomparch.md.liquid`
+- `prompts/review/impl.md.liquid`
+- `prompts/review/fanin.md.liquid`
+
+Each review template receives the same Liquid context the
+generation template did (since the reviewer must see what
+the generator saw) plus `draft` (the body being reviewed).
+
+### B.2.4 Thinking effort
+
+The bundle declares per-tier `thinking_effort` on tiers
+where deep reasoning improves output quality. The default
+bundle assigns:
+
+- `feature_expansion`, `requirements`, `sysarch` — max.
+- `comparch` — max. Inline cross-section consistency,
+  surface closure, dependency grounding, single-owner
+  discipline — the comparch reconciliation pass is the
+  most demanding generation in the chain.
+- `subcomparch`, `impl`, `fanin`, review tiers — default.
+  Late-stage compression doesn't need deep reasoning
+  because the handles are already compressed.
+
+The `thinking_effort` field is read by CC when it invokes
+the LLM; the bundle declaration tells CC which budget to
+assign per tier.
+
+### B.2.5 The meaning-engine framing
+
+The default bundle's prompts implement the meaning engine
+described in `docs/architecture/v2-rearchitecture.md` (see
+that document's "The system as a meaning engine" section).
+Each tier produces compressed handles for the next; each
+prompt names its downstream reader; each prompt pushes
+against category-speak. Handle quality (meaning per token)
+is what makes the chain work.
+
+The meaning engine is a property of *these prompts*, not
+of the platform. A different bundle could compose its tiers
+differently — a bundle for visual design might produce
+handles at finer granularity, a bundle for legal contracts
+might produce different compression ratios. The platform is
+generic over what handles mean.
+
+### B.2.6 Per-tier context bundles
+
+CLAUDE.md's "per-tier context bundles" section documents
+the per-tier triad invariant the legacy chain enforces:
+every generator and reviewer for the same tier consume the
+same context dict. The Liquid port preserves this — the
+generation and review templates for one tier receive
+identical variables (plus `draft` on the review side), so
+the reviewer sees the same context the generator saw.
+
+This invariant is what makes the AI review catch drift
+between intent (what the generator was supposed to do) and
+output (what it did). Without it, reviewers would flag
+"problems" that are just artifacts of the reviewer seeing
+different context than the generator.
+
+### B.2.7 Port milestone
+
+The Liquid port is a bootstrap milestone, not an in-spec
+artifact. SiegeEngine, when reading this spec to build
+Catapult, materializes the Liquid templates by porting from
+siege's existing Python-substituted markdown. The porting
+is mechanical; the spec needs only the high-level mapping
+(B.2.1) and the tier inventory (B.2.2 / B.2.3).
+
+## B.3 Per-tier grammars
+
+Each tier's body and review files conform to a grammar.
+The grammars carry the structured fields downstream tiers
+parse and the projection-derives fragments from.
+
+### B.3.1 Body grammars
+
+Body grammars are XML-fragmented markdown. The body file is
+markdown prose with embedded structured `<element>` blocks.
+The platform validates the embedded XML against an XSD
+schema declared per tier; markdown text outside structured
+elements is free prose.
+
+Per-tier root tags:
+
+- `feature_expansion` — `<features>` with one or more
+  `<feature>` children, each with `<name>` and `<intent>`.
+- `requirements` — `<requirements>` with one or more
+  `<responsibility>` children, each with `<name>` and
+  `<feats>` references back to feature IDs.
+- `sysarch` — markdown sections (`## project_techspec`,
+  `## project_policies`, etc.) plus `<components>`,
+  `<policies>`, `<dependencies>`, and `<domain-parent>`
+  blocks. The most structurally complex tier.
+- `comparch` — markdown sections (`## comparch:techspec`,
+  `## comparch:pubapi`, etc.) plus `<subcomponents>` and
+  `<sub-dependencies>` and per-subcomponent `<owns>`
+  blocks.
+- `subcomparch` — markdown sections (`## subcomparch:pubapi`,
+  `## subcomparch:privapi`, etc.) with typed signatures in
+  XML.
+- `impl` — markdown sections describing the implementation
+  approach + structured `<types>`, `<functions>`, and
+  `<tests>` blocks.
+- `fanin` — markdown sections aggregating subcomp pubapis
+  with structural caveats.
+
+The XSDs and section conventions port from siege's
+`backend/graph/parsers/validators.py` and
+`backend/graph/parsers/xml_sections.py`. The port is
+mechanical, not a redesign.
+
+### B.3.2 Review grammar
+
+Review files conform to a single platform-recognized
+review grammar:
+
+```xml
+<review>
+  <intro>One or two short paragraphs giving a "how close to
+finished" read on the artifact.</intro>
+  <score>0</score>
+  <handles-structure>
+    <finding id="h1">…</finding>
+    …
+  </handles-structure>
+  <architectural-decisions>
+    <finding id="a1">…</finding>
+    …
+  </architectural-decisions>
+</review>
+```
+
+`<intro>` is 3-6 sentences of display-only prose.
+`<score>` is an integer 0-100 with bucket semantics
+(0-30: fundamental rework; 31-60: structural fixes; 61-85:
+minor refinements; 86-100: ready). The two `<finding>`
+sections are individually-addressable critiques the
+dashboard renders as apply-as-feedback buttons.
+
+The grammar is the same across every reviewed tier. Per-
+tier review prompts ask the reviewer to fill the structure
+with tier-appropriate findings.
+
+### B.3.3 Validation at commit
+
+When the agent commits a body or review file, Catapult's
+write tool fetches the file at the new sha, runs the
+bundle's per-tier grammar validator, and either accepts
+the commit (reducer applies events) or rejects it (returns
+a typed error CC can read and respond to). Validation is a
+required gate; there is no "partially-committed" state.
+
+## B.4 Per-tier readiness predicates
+
+Each tier's `context:` walks define its readiness; the
+default bundle's per-tier walks are:
+
+- **`feature_expansion`** — `self.input_doc` (the project's
+  input document, fetched from the project repo at a
+  configured path). Ready as soon as the input doc exists.
+- **`requirements`** — `self.upstream.feature_expansion →
+  handle`. Ready when feature_expansion is approved.
+- **`sysarch`** — `self.upstream.requirements → handle`.
+  Ready when requirements is approved.
+- **`comp`** — minted by sysarch fanout; readiness for the
+  comp's downstream tiers depends on the comp existing in
+  the projection.
+- **`comparch`** — `self.parent.handle`,
+  `self.parent.fulfills → resp.handle`,
+  `self.parent.dependency → target.handle.fragments[pubapi]`,
+  `self.parent.domain_parent → target.synthesis` (when
+  parent is presentational). Ready when the comp exists +
+  its fulfilled resps are approved + its dependencies' comparch
+  pubapis are populated + its domain parents' fanins are
+  populated.
+- **`subcomp`** — minted by comparch fanout.
+- **`subcomparch`** — `self.parent.handle`,
+  `self.parent.parent.handle`,
+  `self.parent.parent.dependency_of_subcomp → target.handle.fragments[pubapi]`.
+  Ready when the subcomp exists, its comp's comparch is
+  approved, and the subcomp's cross-subcomp deps within
+  the comp are approved.
+- **`impl`** — phased; for `(subcomp, phase)` pair: ready
+  when subcomparch is approved, the phase's prior phases'
+  impls for this subcomp are approved (if any), and the
+  cross-phase context walk (§A.7.4) resolves.
+- **`fanin`** — phased synthesis; for `(comp, phase)` pair:
+  ready when every subcomp under the domain comp has an
+  approved impl at this phase.
+- **`code`** — `generator: git_commit`; ready signal is the
+  bundle's commit-discovery mechanism (CC pushes code to
+  the code repo and calls `commit_draft` with the code's
+  sha).
+
+These walks port from siege's per-tier readiness queries
+(`siege/projection/`) into the bundle DSL.
+
+## B.5 Phase rules
+
+The default bundle's phase machinery declares which tiers
+are phased and the plan rule that computes phase assignment.
+
+### B.5.1 Phased tiers
+
+Two tiers in the default bundle carry `phased: true`:
+
+- `impl` — one body per `(subcomp, phase)` pair.
+- `fanin` — one body per `(comp, phase)` pair (and only for
+  domain comps).
+- `code` — one body per `(impl, phase)` pair, mirroring
+  impl.
+
+All other tiers are unphased; each has one body per scope
+regardless of phase.
+
+### B.5.2 The plan rule
+
+The default bundle's `plan_rule` (declared in
+`bundles/default/plan.yaml`) computes phase assignment by:
+
+1. **User-pinned feature phases** — the user assigns each
+   approved feature to a phase via the dashboard. The
+   default if not pinned is phase 1.
+2. **Cascade up the chain** — each responsibility is
+   assigned to the earliest phase any of its features are
+   in. Each component to the earliest phase any of its
+   responsibilities are in. Each subcomponent to the
+   earliest phase its component is in. Each impl to the
+   subcomponent's phase.
+3. **Foundation overrides** — foundation components and
+   their downstream impls are assigned to phase 1
+   regardless of their responsibilities' phases. (Other
+   components depend on foundation; foundation must build
+   first.)
+4. **Cross-component dependency** — a component depending
+   on another component cannot be in an earlier phase.
+   The plan rule rejects invalid assignments at compute
+   time with a typed error.
+
+### B.5.3 Plan recomputation
+
+The plan recomputes whenever a body affecting assignment
+changes — typically when sysarch is regenerated (component
+set changed), comparch is regenerated (subcomponent set
+changed), or the user re-pins a feature phase. The recompute
+runs as part of the reducer's branch for the triggering
+event; the new plan is written to the `phase_plan`
+projection in the same transaction.
+
+### B.5.4 Cross-phase delta context
+
+Phased impl prompts receive a `prior_phases` Liquid
+variable carrying the as-of-prior-phase impl handles for
+the same subcomponent. The bundle's impl context walk
+includes `self.subcomp → all_prior_phase_impls → handle`;
+the platform's scope-resolution understands "all prior
+phases" as iterating `phase` from 1 to (current_phase - 1).
+
+The prompt incorporates the delta: "this impl is for phase
+N; phases 1..N-1 produced these handles; build the next
+slice that's consistent with them." Without the delta the
+prompt would re-derive structural decisions on every phase
+boundary.
+
+## B.6 Flow definitions
+
+The default bundle ships five flows. Each is declared as
+`bundles/default/flows/<name>/flow.yaml` plus its prompt
+files. Plus scaffolding, which is not a flow (§A.5.6).
+
+### B.6.1 Scaffolding (baseline)
+
+Walks the chain from input doc through every reviewed tier
+in dependency order, drafting and reviewing each scope.
+Driven by `/scaffold` in the agent's skill suite. Not a
+flow; just the base schema running.
+
+### B.6.2 Feature request
+
+`bundles/default/flows/feature_request/`.
+
+Seed: prose describing a desired feature change. Walk
+primitive: `downward_cascade`. Adds a `feature_request_plan`
+planning tier per scaffold tier the flow visits. The plan
+tells the downstream regen what to change; the regen
+incorporates it.
+
+Used when the user wants to add a feature to an
+already-scaffolded project: the flow walks down from
+feature_expansion through every tier the new feature
+implicates, regenerating each in the new state.
+
+### B.6.3 Refactor
+
+`bundles/default/flows/refactor/`.
+
+Seed: prose describing a structural change (component
+reshape, dependency reroute, responsibility redistribution).
+Walk primitive: `downward_cascade`. Adds a `refactor_plan`
+planning tier per visited scaffold tier.
+
+Differs from feature_request in scope: refactor doesn't
+add new functionality, it reshapes how existing
+functionality is delivered. The plan grammar enforces
+"this is a structural change, not a feature change"
+discipline.
+
+### B.6.4 Bug-fix propagation
+
+`bundles/default/flows/bug_fix/`.
+
+Seed: a defect report identifying a specific incorrect
+behavior. Walk primitive: `downward_cascade`. Adds a
+`bug_fix_plan` planning tier visiting the tier that
+originated the defect plus the downstream tiers that need
+to be regenerated to fix it.
+
+### B.6.5 Downward propagation
+
+`bundles/default/flows/downward_propagation/`.
+
+Seed: a scope at which the user re-approved with changes
+that need to propagate downstream. Walk primitive:
+`downward_cascade`. Adds a `propagation_plan` planning tier
+per visited downstream scope.
+
+This is the explicit version of what staling does
+implicitly. Used when the user wants to drive a propagation
+with explicit per-scope plans rather than waiting for
+ad-hoc regens to accumulate.
+
+### B.6.6 Upward propagation
+
+`bundles/default/flows/upward_propagation/`.
+
+Seed: a scope at which a downstream argument (a comparch
+flagging that its responsibilities are infeasible, a sub
+comparch flagging that its parent's API surface is wrong)
+suggests an upstream decision was wrong. Walk primitive:
+`up_then_down`.
+
+The walk goes upstream to the point at which a planning
+decision needs to be made (typically requirements or
+sysarch), generates a plan there, then propagates the
+plan's effects back downstream.
+
+### B.6.7 Plan-change flow
+
+`bundles/default/flows/plan_change/`.
+
+Seed: a phase plan diff (the user moved features between
+phases, split a phase, dropped a phase). Walk primitive:
+`downward_cascade` over the affected `(subcomp, phase)` and
+`(comp, phase)` pairs. Regenerates phased impl + fanin
+bodies whose phase assignments changed.
