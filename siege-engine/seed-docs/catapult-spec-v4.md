@@ -2518,9 +2518,6 @@ Pages the dashboard exposes:
   detail panel (body + review + history), the open-flow
   sidebar.
 - **Review queue** — pending drafts awaiting human review.
-- **Cohort analytics** (deferred from siege — may or may
-  not ship in v4's initial cut depending on scope; flag
-  this when implementing).
 - **Settings** — collaborator management, bundle switch,
   OAuth credential management.
 
