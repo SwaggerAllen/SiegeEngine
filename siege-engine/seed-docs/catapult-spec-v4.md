@@ -1207,6 +1207,29 @@ commands the platform recognizes:
 - **`close_flow`** — `(project_id, flow_id)`. Closes an
   open flow. The aggregate validates that the flow's
   completion predicate is satisfied.
+- **`create_reference`** — `(project_id, name, content,
+  seed?)`. Mints a ref node under the bundle's ref tier and
+  writes the body file containing the ref's content (when
+  `content` is supplied) or fires a generate pass against
+  the bundle's ref-tier prompt with `seed` as the seed
+  description (when only `seed` is supplied). Returns
+  `ref_id`. Used when the agent wants to make supplemental
+  content available for downstream context walks — DSL
+  specs, runbooks, implementation guides.
+- **`attach_reference`** — `(project_id, source_node_id,
+  ref_id)`. Adds a `<reference target="ref_id"/>` block
+  into the source node's body (the platform handles the
+  body-file edit + commit) and fires the edge derivation.
+  The next regen of the source node sees the ref's content
+  as context.
+- **`add_input_document`** — `(project_id, role, name,
+  content)`. Adds an input document for the bundle's
+  extraction tiers to read. `role` is a bundle-declared
+  slot name (the default bundle uses `project_doc` for the
+  primary input; other bundles can declare additional
+  roles). Multiple input documents with the same role are
+  concatenated in insertion order; bundles can declare
+  exclusive roles where second-add replaces first.
 
 Write tools return either success (with the new event
 sequence) or a typed error. Failures are first-class data CC
@@ -1713,6 +1736,10 @@ The project repo holds:
   Path layout is bundle-declared per tier.
 - **`<tier>/<scope_path>/review.md`** — per-scope review
   files where the scope has been reviewed.
+- **`inputs/<role>.md`** — project input documents. One
+  file per bundle-declared input role (default bundle:
+  `inputs/project_doc.md` for the primary input). Extraction
+  tiers read these via the bundle's input-doc context walks.
 
 That's the full surface. The repo contains no state files,
 no identity ledgers, no propagation records, no phase plan,
@@ -1803,6 +1830,37 @@ This is a deliberate scope choice. Catapult is a design
 memory + reactive reactive-schema engine + agent driver;
 running code is a different product entirely.
 
+### A.10.6 Input documents
+
+Extraction tiers (feature_expansion, requirements, sysarch
+in the default bundle) read **input documents** — prose
+the human author wrote describing what the project is. Input
+documents live in the project git repo at `inputs/<role>.md`
+and are tracked by an `input_documents` projection in
+Postgres for queryability.
+
+The bundle declares input-document **roles** — slot names
+the bundle's extraction-tier context walks reference. The
+default bundle uses one role, `project_doc`, for the
+project's primary input. A more elaborate bundle might
+declare `project_doc` + `domain_spec` + `style_guide` and
+have different tiers read different roles.
+
+Input documents are added via the agent's
+`add_input_document` write tool (§A.4.3) or via the
+dashboard's project-creation flow. Adding writes the file
+to the project repo, commits, pushes, and emits an
+`InputDocumentAdded` event the projection consumes. The
+reducer fires staleness markers on every scope whose
+context walk references the affected role, so re-running
+the chain after an input doc change re-extracts cleanly.
+
+The `input_documents` projection's row shape:
+`(input_doc_id, project_id, role, name, body_sha,
+inserted_at)`. The body content is read from the git blob
+at `body_sha`, not stored in Postgres — same separation as
+body and review files.
+
 ---
 
 # Part B — Default bundle
@@ -1882,11 +1940,29 @@ compression and rotation to leaves at implementation.
   code repo via the `git_commit` mechanism (§A.10.4). One
   scope per impl per phase.
 
-Plus the platform-recognized `policy` tier (a node kind
-sysarch fans out for project-wide policies; no draft of its
-own, just a target for `policy_application` edges) and the
-`vocab` tier (project glossary terms extracted during
-feature_expansion).
+Plus three supporting tiers the default bundle declares:
+
+- **`policy`** — a node kind sysarch fans out for project-
+  wide policies; no draft of its own, just a target for
+  `policy_application` edges.
+- **`vocab`** — project glossary terms extracted during
+  feature_expansion.
+- **`ref`** — free-form supplemental content (runbooks, DSL
+  grammars, implementation guides) that downstream tiers
+  reference via `<reference target="ref_id"/>` markers in
+  their bodies. Scope: `singleton` (one ref pool per
+  project). Identity: `id`. Body grammar: minimal
+  `<reference>` root with `<title>`, `<body>`, and optional
+  repeated `<see-also target="..."/>` cross-reference
+  elements. Generator: `llm` for content-from-seed
+  expansion. Refs are first-class reviewable artifacts on
+  the same draft → review → approve lifecycle as any other
+  tier. Created via the agent's `create_reference` write
+  tool (§A.4.3) or directly via the dashboard's References
+  page. Default-bundle convention: comparch tier and below
+  may consume refs; sysarch and above do not, on the
+  principle that refs hold implementation detail rather
+  than architectural decisions.
 
 ### B.1.2 Foundation components
 
