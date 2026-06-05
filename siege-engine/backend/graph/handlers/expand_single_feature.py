@@ -78,6 +78,44 @@ def get_reqs_node(session, project_id: str) -> Node | None:
     ).scalar_one_or_none()
 
 
+def _resolve_input_doc_body(doc: InputDocument | None, project_id: str) -> str:
+    """Return the input document's body text.
+
+    v3 input documents store body content in git; ``body_sha`` +
+    ``body_path`` point at the blob. Legacy rows store content
+    inline in ``content``. Prefer the git path when ``body_sha`` is
+    set; fall back to ``content`` otherwise (and use ``content``
+    when the git fetch fails so the handler keeps working through
+    transient git issues).
+    """
+    if doc is None:
+        return ""
+    if not doc.body_sha or not doc.body_path:
+        return doc.content or ""
+    try:
+        from siege.auth_lookup import lookup_project_auth
+        from siege.git_view import cache as view_cache
+
+        auth = lookup_project_auth(project_id, None)
+        view = view_cache.get_view(
+            project_id,
+            "main",
+            remote_url=auth.remote_url,
+            access_token=auth.access_token,
+        )
+        return view.read_body_text(doc.body_path)
+    except Exception as exc:  # noqa: BLE001
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Failed to fetch v3 input doc body via git for project=%s path=%s: %s "
+            "— falling back to content column",
+            project_id,
+            doc.body_path,
+            exc,
+        )
+        return doc.content or ""
+
+
 logger = logging.getLogger(__name__)
 
 EXPAND_SINGLE_FEATURE_JOB_TYPE = "v2.expand_single_feature"
@@ -174,7 +212,7 @@ async def _handle(payload: dict) -> None:
             .order_by(InputDocument.created_at.desc())
             .first()
         )
-        input_doc = input_doc_row.content if input_doc_row else ""
+        input_doc = _resolve_input_doc_body(input_doc_row, project_id) if input_doc_row else ""
 
         existing_feats = (
             db.query(Node)

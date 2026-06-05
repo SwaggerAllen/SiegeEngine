@@ -184,6 +184,7 @@ import backend.graph  # noqa: E402,F401
 from backend.auth.routes import router as auth_router  # noqa: E402
 from backend.github.oauth import router as github_router  # noqa: E402
 from backend.graph.debug_routes import router as debug_router  # noqa: E402
+from backend.graph.input_documents_routes import router as input_docs_router  # noqa: E402
 from backend.graph.jobs_routes import router as jobs_router  # noqa: E402
 from backend.graph.queue_routes import router as queue_router  # noqa: E402
 from backend.graph.routes import router as graph_router  # noqa: E402
@@ -195,6 +196,7 @@ app.include_router(graph_router, prefix="/api/projects", tags=["graph"])
 app.include_router(queue_router, prefix="/api/projects", tags=["queue"])
 app.include_router(jobs_router, prefix="/api/projects", tags=["jobs"])
 app.include_router(debug_router, prefix="/api/projects", tags=["debug"])
+app.include_router(input_docs_router, prefix="/api/projects", tags=["input-documents"])
 app.include_router(github_router, prefix="/api/github", tags=["github"])
 
 # Mount the siege read API — the dashboard's read-only projection of
