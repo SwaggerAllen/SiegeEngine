@@ -179,3 +179,35 @@ def list_references(project_id: str) -> list[dict[str, Any]]:
     that returns both legacy and v3 refs uniformly)."""
     resp = get(f"/api/projects/{project_id}/references")
     return resp.get("references", []) if isinstance(resp, dict) else []
+
+
+# ── Vocabulary ───────────────────────────────────────────────────────
+
+
+def create_git_vocab(
+    project_id: str,
+    vocab_id: str,
+    name: str,
+    body_sha: str,
+    body_path: str | None = None,
+) -> dict[str, Any]:
+    """Register a git-resident vocab entry on the backend."""
+    payload: dict[str, Any] = {
+        "vocab_id": vocab_id,
+        "name": name,
+        "body_sha": body_sha,
+    }
+    if body_path is not None:
+        payload["body_path"] = body_path
+    return post(f"/api/projects/{project_id}/vocabulary", payload)
+
+
+def get_vocab_by_name(project_id: str, name: str) -> dict[str, Any] | None:
+    from urllib.parse import quote
+
+    return get(f"/api/projects/{project_id}/vocabulary/by-name?name={quote(name)}")
+
+
+def list_vocab(project_id: str) -> list[dict[str, Any]]:
+    resp = get(f"/api/projects/{project_id}/vocabulary")
+    return resp.get("entries", []) if isinstance(resp, dict) else []

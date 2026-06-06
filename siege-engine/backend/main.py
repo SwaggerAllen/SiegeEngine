@@ -189,15 +189,16 @@ from backend.graph.jobs_routes import router as jobs_router  # noqa: E402
 from backend.graph.queue_routes import router as queue_router  # noqa: E402
 from backend.graph.references_git_routes import router as refs_git_router  # noqa: E402
 from backend.graph.routes import router as graph_router  # noqa: E402
+from backend.graph.vocabulary_git_routes import router as vocab_git_router  # noqa: E402
 from backend.projects.routes import router as project_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(project_router, prefix="/api/projects", tags=["projects"])
-# refs_git_router must mount before graph_router: its
-# /references/by-name route would otherwise be shadowed by
-# routes.py's /references/{ref_id} pattern (FastAPI matches in
-# registration order).
+# *_git routers must mount before graph_router: their /by-name
+# routes would otherwise be shadowed by routes.py's /{id}
+# patterns (FastAPI matches in registration order).
 app.include_router(refs_git_router, prefix="/api/projects", tags=["references-git"])
+app.include_router(vocab_git_router, prefix="/api/projects", tags=["vocabulary-git"])
 app.include_router(graph_router, prefix="/api/projects", tags=["graph"])
 app.include_router(queue_router, prefix="/api/projects", tags=["queue"])
 app.include_router(jobs_router, prefix="/api/projects", tags=["jobs"])
