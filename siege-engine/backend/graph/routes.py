@@ -21,23 +21,12 @@ from sqlalchemy.orm import Session
 
 from backend.auth.routes import get_current_user
 from backend.database import get_db
-from backend.graph import events as ev
 from backend.graph import queries
-from backend.graph.bootstrap_routes import (
-    BootstrapTierConfig,
-    bootstrap_approve,
-    bootstrap_cancel,
-    bootstrap_discard,
-    bootstrap_feedback,
-    bootstrap_get_state,
-)
 from backend.graph.broadcast import commit_and_publish
 from backend.graph.fragments import (
     FragmentKind,
     fragment_id,
 )
-from backend.graph.handlers.generate_reference import GENERATE_REFERENCE_JOB_TYPE
-from backend.graph.reducer import append_event
 from backend.models import Project, User
 from backend.models.node import Draft, Edge, Fragment, Node
 
@@ -53,85 +42,16 @@ def _require_project(db: Session, project_id: str) -> Project:
     return project
 
 
-def _node_to_dict(node) -> dict:
-    return {
-        "id": node.id,
-        "name": node.name,
-        "content": node.content,
-        "updated_at": node.updated_at.isoformat() if node.updated_at else "",
-    }
-
-
-def _draft_to_dict(draft) -> dict:
-    return {
-        "id": draft.id,
-        "content": draft.content,
-        "created_at": draft.created_at.isoformat() if draft.created_at else "",
-        "change_summary": draft.change_summary,
-    }
-
-
-# ── Shared response models (used by refs + review/batches) ────────────
+# ── Shared response models ────────────────────────────────────────
 
 
 class ExpansionNodeResponse(BaseModel):
-    """Node-payload shape the bootstrap state helpers return.
-
-    Named for historical reasons (originally the per-tier expansion
-    flow's node model); now serves as the generic shape for refs +
-    review-batches consumers.
-    """
+    """Generic node-payload shape used by refs + review-batches."""
 
     id: str
     name: str
     content: str
     updated_at: str
-
-
-class ExpansionDraftResponse(BaseModel):
-    id: str
-    content: str
-    created_at: str
-    change_summary: str | None = None
-
-
-class TelemetrySummary(BaseModel):
-    prompt_tokens: int
-    completion_tokens: int
-    model: str
-    created_at: str
-
-
-class LastGenerationJob(BaseModel):
-    """Doc-page header — the most recent generation job for a node."""
-
-    status: str
-    created_at: str
-    completed_at: str | None = None
-    error_message: str | None = None
-
-
-class FeedbackRequest(BaseModel):
-    feedback: str
-    # Legacy auto-revision knob, no longer wired; kept for payload
-    # compatibility with the deployed frontend's older requests.
-    auto_revisions_requested: int = 0
-
-
-class FeedbackResponse(BaseModel):
-    job_id: str
-
-
-class DraftIdRequest(BaseModel):
-    draft_id: str
-
-
-class DiscardResponse(BaseModel):
-    ok: bool
-
-
-class CancelResponse(BaseModel):
-    cancelled: bool
 
 
 class DraftHistoryEntry(BaseModel):
@@ -341,11 +261,6 @@ def get_project_structure(
     vocab, refs). Replaces the per-view GET endpoints that
     previously each required their own fetch + polling.
     """
-    from backend.graph.running import (
-        errored_node_ids,
-        running_node_ids,
-        user_action_needed_node_ids,
-    )
     from backend.graph.staleness import stale_node_reasons
 
     _require_project(db, project_id)
@@ -390,9 +305,11 @@ def get_project_structure(
         ).scalars()
     )
 
-    running_ids = running_node_ids(db, project_id)
-    errored_ids = errored_node_ids(db, project_id)
-    user_action_ids = user_action_needed_node_ids(db, project_id)
+    # Per-tier generation retired; the few remaining badges all resolve
+    # to "no active job" because the server doesn't generate anymore.
+    running_ids: set[str] = set()
+    errored_ids: set[str] = set()
+    user_action_ids: set[str] = set()
     stale_reasons_by_id = stale_node_reasons(db, project_id)
     offset = queries.latest_offset(db, project_id) or 0
 
@@ -530,13 +447,19 @@ async def get_project_event_stream(
     return EventSourceResponse(event_publisher(), ping=15)
 
 
-# ── Vocabulary routes (Phase 5.5) ──────────────────────────────────
+# ── Vocabulary routes (read-only) ──────────────────────────────────
+#
+# Authoring moved to the `/create_vocab` Claude Code skill — the
+# body lives in the project repo at `vocab/<vocab_id>/body.md` and
+# the v3 git routes in `vocabulary_git_routes.py` register it.
+# The endpoints below are read-only projections used by the
+# dashboard.
 
 
 class VocabEntryResponse(BaseModel):
     id: str
     name: str
-    content: str  # raw <vocab-entry> XML
+    content: str  # rendered body (read from git for v3 rows)
     parent_id: str | None
     parent_name: str | None  # resolved for the UI; None at project scope
     updated_at: str
@@ -546,25 +469,9 @@ class VocabListResponse(BaseModel):
     entries: list[VocabEntryResponse]
 
 
-class CreateVocabRequest(BaseModel):
-    name: str
-    content: str  # full <vocab-entry>...</vocab-entry> XML
-    parent_id: str | None = None  # None → project-level, feat_* id → feature-local
-
-
-class EditVocabRequest(BaseModel):
-    new_content: str  # new full <vocab-entry> XML
-
-
-class RenameVocabRequest(BaseModel):
-    new_name: str
-
-
-class ReparentVocabRequest(BaseModel):
-    new_parent_id: str | None  # None → promote to project-level
-
-
 def _serialize_vocab_entry(db: Session, node: Node) -> VocabEntryResponse:
+    from backend.graph.vocabulary_git_routes import resolve_vocab_body
+
     parent_name: str | None = None
     if node.parent_id is not None:
         parent = db.get(Node, node.parent_id)
@@ -573,38 +480,11 @@ def _serialize_vocab_entry(db: Session, node: Node) -> VocabEntryResponse:
     return VocabEntryResponse(
         id=node.id,
         name=node.name,
-        content=node.content or "",
+        content=resolve_vocab_body(node),
         parent_id=node.parent_id,
         parent_name=parent_name,
         updated_at=node.updated_at.isoformat() if node.updated_at else "",
     )
-
-
-def _validate_vocab_content(content: str, *, term_name: str, known_feature_names: set[str]) -> None:
-    """Run the vocab validator over a standalone ``<vocab-entry>`` block.
-
-    Wraps the content in a synthetic ``<vocabulary><term>`` shell so
-    ``validate_vocabulary`` can parse it, because the top-level
-    validator expects a ``<vocabulary>`` root. Raises HTTPException
-    422 on any structural error. Used by the create and edit routes
-    to ensure user-supplied content is valid before committing.
-    """
-    from backend.graph.parsers.validators import ValidationError, validate_vocabulary
-    from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
-
-    wrapped = f'<vocabulary><term name="{term_name}" scope="project">{content}</term></vocabulary>'
-    try:
-        tree = extract_tag_tree(wrapped, "vocabulary")
-        validate_vocabulary(
-            tree,
-            known_feature_names=known_feature_names,
-            allow_id_refs=True,
-        )
-    except (ParseError, ValidationError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid vocab entry content: {exc}",
-        ) from exc
 
 
 @router.get("/{project_id}/vocabulary", response_model=VocabListResponse)
@@ -613,13 +493,7 @@ def get_vocabulary(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> VocabListResponse:
-    """List every vocab entry in a project, project-level first.
-
-    The response carries both project-level (``parent_id`` is
-    null) and feature-local (``parent_id`` is a ``feat_*`` id)
-    entries in a single flat list. The frontend filters by scope
-    when rendering the list view and the per-feature panel.
-    """
+    """List every vocab entry in a project, project-level first."""
     _require_project(db, project_id)
     from backend.graph.vocabulary import list_all_vocab
 
@@ -667,288 +541,13 @@ def get_vocabulary_entry(
     return _serialize_vocab_entry(db, entry)
 
 
-@router.post(
-    "/{project_id}/vocabulary/create",
-    response_model=VocabEntryResponse,
-)
-def post_create_vocab(
-    project_id: str,
-    req: CreateVocabRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> VocabEntryResponse:
-    """Create a new vocab entry with user-supplied content.
-
-    Content must be a valid ``<vocab-entry>`` XML block; the
-    route validates it before emitting ``NodeCreated``. Scope is
-    set via ``parent_id``: ``None`` → project-level, a ``feat_*``
-    id → feature-local. The reducer's vocab-parent invariant
-    enforces that ``parent_id`` is either ``None`` or a valid
-    feat_* node.
-
-    User-supplied content means no LLM is involved in the create
-    path. Users type definition prose directly; the LLM-assisted
-    feedback → regen flow is deferred to a follow-up.
-    """
-    _require_project(db, project_id)
-
-    # Parent validation: if scope is feature, the parent must be
-    # a real feat_* in this project. The reducer would reject
-    # it anyway, but an early 404 is a better UX than an
-    # opaque reducer error.
-    if req.parent_id is not None:
-        parent = db.get(Node, req.parent_id)
-        if parent is None or parent.project_id != project_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Parent node {req.parent_id!r} not found in project",
-            )
-        if parent.tier != "feat":
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Vocab entries may only be parented to feat_* nodes; "
-                    f"{req.parent_id!r} is a {parent.tier!r} node."
-                ),
-            )
-
-    # Content validation. Collect feature names for the validator's
-    # feature-name cross-reference check in case the user's
-    # content has <see-also> entries that reference features
-    # (it shouldn't — see-also refs reference other terms, not
-    # features — but the validator needs the set to exist).
-    known_feature_names: set[str] = set()
-    _validate_vocab_content(
-        req.content,
-        term_name=req.name,
-        known_feature_names=known_feature_names,
-    )
-
-    # Uniqueness check within scope — matches the validator's
-    # rule for batch creation. Reject early with 409 if a term
-    # with this name already exists at the requested scope.
-    from backend.graph.vocabulary import vocab_by_name
-
-    existing = vocab_by_name(db, project_id, req.name, parent_id=req.parent_id)
-    if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=(f"Vocab entry named {req.name!r} already exists at this scope."),
-        )
-
-    from backend.graph.ids import Kind, mint
-
-    vocab_id = mint(db, Kind.VOCAB)
-    append_event(
-        db,
-        project_id,
-        ev.NodeCreated(
-            node_id=vocab_id,
-            tier="vocab",
-            kind="domain",
-            parent_id=req.parent_id,
-            name=req.name,
-            display_order=0,
-            content=req.content,
-        ),
-    )
-    commit_and_publish(db, project_id)
-
-    node = db.get(Node, vocab_id)
-    assert node is not None
-    return _serialize_vocab_entry(db, node)
-
-
-@router.post(
-    "/{project_id}/vocabulary/{vocab_id}/edit",
-    response_model=VocabEntryResponse,
-)
-def post_edit_vocab(
-    project_id: str,
-    vocab_id: str,
-    req: EditVocabRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> VocabEntryResponse:
-    """Replace a vocab entry's content with user-supplied new content.
-
-    Direct content replacement, no LLM involvement. The new
-    content is validated as a standalone ``<vocab-entry>`` block
-    before it lands. Because Node.content is written by the
-    ``DraftApproved`` reducer branch (and there's no draft here
-    because this is a direct edit), the reducer emits a synthetic
-    draft-approved event via a small helper: actually, simpler —
-    directly mutate Node.content with an updated_at bump. Event
-    sourcing via the reducer is the right long-term path once
-    drafts are wired in; for now, direct update is acceptable
-    given this is the only write path for vocab content edits.
-    """
-    _require_project(db, project_id)
-    from backend.graph.vocabulary import vocab_by_id
-
-    entry = vocab_by_id(db, vocab_id)
-    if entry is None or entry.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
-
-    _validate_vocab_content(
-        req.new_content,
-        term_name=entry.name,
-        known_feature_names=set(),
-    )
-
-    # Direct content update. Using a raw attribute write + commit
-    # matches the pattern used by other "user-supplied content
-    # lands straight on the node" paths in v2; when the full
-    # event-sourced draft flow for vocab lands as a follow-up,
-    # this will be refactored to emit DraftGenerated +
-    # DraftApproved events through the reducer instead.
-    from datetime import datetime
-
-    entry.content = req.new_content
-    entry.updated_at = datetime.utcnow()
-    commit_and_publish(db, project_id)
-
-    return _serialize_vocab_entry(db, entry)
-
-
-@router.post(
-    "/{project_id}/vocabulary/{vocab_id}/rename",
-    response_model=VocabEntryResponse,
-)
-def post_rename_vocab(
-    project_id: str,
-    vocab_id: str,
-    req: RenameVocabRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> VocabEntryResponse:
-    _require_project(db, project_id)
-    from backend.graph.vocabulary import vocab_by_id, vocab_by_name
-
-    entry = vocab_by_id(db, vocab_id)
-    if entry is None or entry.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
-
-    new_name = req.new_name.strip()
-    if not new_name:
-        raise HTTPException(status_code=422, detail="new_name cannot be empty")
-
-    if new_name != entry.name:
-        existing = vocab_by_name(db, project_id, new_name, parent_id=entry.parent_id)
-        if existing is not None and existing.id != vocab_id:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Vocab entry named {new_name!r} already exists at this scope.",
-            )
-
-    append_event(
-        db,
-        project_id,
-        ev.NodeRenamed(node_id=vocab_id, new_name=new_name),
-    )
-    commit_and_publish(db, project_id)
-
-    entry = db.get(Node, vocab_id)
-    assert entry is not None
-    return _serialize_vocab_entry(db, entry)
-
-
-@router.post(
-    "/{project_id}/vocabulary/{vocab_id}/reparent",
-    response_model=VocabEntryResponse,
-)
-def post_reparent_vocab(
-    project_id: str,
-    vocab_id: str,
-    req: ReparentVocabRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> VocabEntryResponse:
-    """Promote or demote a vocab entry between project and feature scope.
-
-    Passing ``new_parent_id=None`` promotes a feature-local
-    entry to project-level. Passing a ``feat_*`` id scopes a
-    project-level entry to that feature (or moves a
-    feature-local entry between features). The reducer's
-    vocab-parent invariant enforces that the new parent is
-    either null or a valid feat_* node.
-    """
-    _require_project(db, project_id)
-    from backend.graph.vocabulary import vocab_by_id
-
-    entry = vocab_by_id(db, vocab_id)
-    if entry is None or entry.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
-
-    if req.new_parent_id is not None:
-        parent = db.get(Node, req.new_parent_id)
-        if parent is None or parent.project_id != project_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Parent node {req.new_parent_id!r} not found in project",
-            )
-        if parent.tier != "feat":
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Vocab entries may only be parented to feat_* nodes; "
-                    f"{req.new_parent_id!r} is a {parent.tier!r} node."
-                ),
-            )
-
-    append_event(
-        db,
-        project_id,
-        ev.NodeReparented(node_id=vocab_id, new_parent_id=req.new_parent_id),
-    )
-    commit_and_publish(db, project_id)
-
-    entry = db.get(Node, vocab_id)
-    assert entry is not None
-    return _serialize_vocab_entry(db, entry)
-
-
-@router.post("/{project_id}/vocabulary/{vocab_id}/delete")
-def post_delete_vocab(
-    project_id: str,
-    vocab_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> dict[str, str]:
-    _require_project(db, project_id)
-    from backend.graph.vocabulary import vocab_by_id
-
-    entry = vocab_by_id(db, vocab_id)
-    if entry is None or entry.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
-
-    append_event(
-        db,
-        project_id,
-        ev.NodeDeleted(node_id=vocab_id),
-    )
-    commit_and_publish(db, project_id)
-    return {"status": "deleted", "vocab_id": vocab_id}
-
-
-# ── Reference routes (Phase 6.6) ──────────────────────────────────
+# ── Reference routes (read-only) ──────────────────────────────────
 #
-# Refs use the BootstrapTierConfig pattern for their per-ref
-# lifecycle (get / feedback / approve / discard / cancel). Three
-# things make them deviate from a "pure" bootstrap tier:
-#
-# 1. Multi-instance — the project owns N refs, not a singleton.
-#    The standard list endpoint and the create endpoint stay
-#    bespoke since they have no analogue in the bootstrap config.
-# 2. Never frozen — ``has_been_approved=None`` skips the freeze
-#    gate so ``UpdateReference`` works at any time.
-# 3. ``ref_id`` payload key — generate_reference expects
-#    ``ref_id`` rather than ``component_id`` in the job payload,
-#    handled via the config's ``scope_payload_keys``.
-#
-# Edge add/remove and delete are bespoke because they're
-# non-lifecycle operations that don't map onto the bootstrap
-# helpers.
+# Authoring moved to the `/create_ref` Claude Code skill — the
+# body lives in the project repo at `refs/<ref_id>/body.md` and
+# the v3 git routes in `references_git_routes.py` register it.
+# The endpoints below are read-only projections used by the
+# dashboard.
 
 
 class ReferenceEdgeResponse(BaseModel):
@@ -958,33 +557,9 @@ class ReferenceEdgeResponse(BaseModel):
 
 
 class ReferenceDetailResponse(BaseModel):
-    """GET /references/{ref_id} response.
-
-    Wraps the standard ``BootstrapTierConfig`` payload (node /
-    pending_draft / generation_status / etc.) and adds the
-    ref-specific edge lists.
-    """
+    """GET /references/{ref_id} response — node + edge lists."""
 
     node: ExpansionNodeResponse
-    pending_draft: ExpansionDraftResponse | None
-    generation_status: queries.GenerationStatus
-    last_error: str | None
-    latest_telemetry: TelemetrySummary | None
-    generation_started_at: str | None = None
-    current_attempt: int | None = None
-    max_attempts: int | None = None
-    failed_raw_output: str | None = None
-    # Phase 8 — AI self-review fields. Populated when the tier
-    # has a configured review_job_type; empty string / "idle"
-    # for tiers that don't run reviews.
-    review_text: str = ""
-    review_status: queries.GenerationStatus = "idle"
-    review_last_error: str | None = None
-    review_started_at: str | None = None
-    review_current_attempt: int | None = None
-    review_max_attempts: int | None = None
-    last_generation_job: LastGenerationJob | None = None
-    last_content_updated_at: str | None = None
     outgoing_edges: list[ReferenceEdgeResponse]
     incoming_edges: list[ReferenceEdgeResponse]
 
@@ -1000,32 +575,11 @@ class ReferenceListResponse(BaseModel):
     references: list[ReferenceSummary]
 
 
-class CreateReferenceRequest(BaseModel):
-    name: str
-    seed_description: str
-    related_nodes: list[str] = []
-
-
-class CreateReferenceResponse(BaseModel):
-    ref_id: str
-    job_id: str
-
-
-class AddReferenceEdgeRequest(BaseModel):
-    source_id: str
-    target_id: str
-
-
-class RemoveReferenceEdgeRequest(BaseModel):
-    source_id: str
-    target_id: str
-
-
 def _serialize_reference_summary(node: Node) -> ReferenceSummary:
     return ReferenceSummary(
         id=node.id,
         name=node.name,
-        has_content=bool(node.content),
+        has_content=bool((node.body_sha or node.content or "").strip()),
         updated_at=node.updated_at.isoformat() if node.updated_at else "",
     )
 
@@ -1036,53 +590,6 @@ def _serialize_ref_edge(edge: Edge) -> ReferenceEdgeResponse:
         source_id=edge.source_id,
         target_id=edge.target_id,
     )
-
-
-def _ref_get_node(db: Session, project_id: str, ref_id: str) -> Node | None:
-    """BootstrapTierConfig.get_node adapter for refs.
-
-    Wraps ``references.reference_by_id`` with a project-id check
-    so the bootstrap helper's "node missing" branch fires for
-    cross-project lookups too.
-    """
-    from backend.graph.references import reference_by_id
-
-    node = reference_by_id(db, ref_id)
-    if node is None or node.project_id != project_id:
-        return None
-    return node
-
-
-def _ref_pending_draft(db: Session, project_id: str, ref_id: str) -> Draft | None:
-    return db.execute(
-        select(Draft).where(
-            Draft.project_id == project_id,
-            Draft.target_type == "node",
-            Draft.target_id == ref_id,
-            Draft.status == "pending",
-        )
-    ).scalar_one_or_none()
-
-
-REFERENCE_CONFIG = BootstrapTierConfig(
-    tier_name="Reference",
-    get_node=_ref_get_node,
-    get_pending_draft=_ref_pending_draft,
-    # Refs are NOT frozen after approval — leaving this None
-    # skips the bootstrap helper's freeze-gate check.
-    has_been_approved=None,
-    # No lazy bootstrap: refs are always created explicitly via
-    # POST /references/create; absent is genuinely 404.
-    bootstrap_node=None,
-    generate_job_type=GENERATE_REFERENCE_JOB_TYPE,
-    # No mint job — refs don't fan out into children, so approval
-    # just commits Node.content.
-    mint_job_type="",
-    serialize_node=_node_to_dict,
-    serialize_draft=_draft_to_dict,
-    feedback_readonly_detail="",  # unused (has_been_approved is None)
-    scope_payload_keys=("ref_id",),
-)
 
 
 @router.get("/{project_id}/references", response_model=ReferenceListResponse)
@@ -1109,360 +616,31 @@ def get_reference(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ReferenceDetailResponse:
-    """Return one ref's standard bootstrap payload plus its edges."""
-    state = bootstrap_get_state(
-        db,
-        project_id,
-        (ref_id,),
-        REFERENCE_CONFIG,
-        _require_project,
-    )
+    """Return one ref's body + edge lists."""
     from backend.graph.references import (
         incoming_reference_edges,
         outgoing_reference_edges,
+        reference_by_id,
     )
+    from backend.graph.references_git_routes import resolve_ref_body
+
+    _require_project(db, project_id)
+    node = reference_by_id(db, ref_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
 
     outgoing = [_serialize_ref_edge(e) for e in outgoing_reference_edges(db, project_id, ref_id)]
     incoming = [_serialize_ref_edge(e) for e in incoming_reference_edges(db, project_id, ref_id)]
     return ReferenceDetailResponse(
-        node=ExpansionNodeResponse(**state["node"]),
-        pending_draft=(
-            ExpansionDraftResponse(**state["pending_draft"]) if state["pending_draft"] else None
+        node=ExpansionNodeResponse(
+            id=node.id,
+            name=node.name,
+            content=resolve_ref_body(node),
+            updated_at=node.updated_at.isoformat() if node.updated_at else "",
         ),
-        generation_status=state["generation_status"],
-        last_error=state["last_error"],
-        latest_telemetry=state["latest_telemetry"],
-        generation_started_at=state.get("generation_started_at"),
-        current_attempt=state.get("current_attempt"),
-        max_attempts=state.get("max_attempts"),
-        failed_raw_output=state.get("failed_raw_output"),
-        last_generation_job=state.get("last_generation_job"),
-        last_content_updated_at=state.get("last_content_updated_at"),
         outgoing_edges=outgoing,
         incoming_edges=incoming,
     )
-
-
-@router.post(
-    "/{project_id}/references/create",
-    response_model=CreateReferenceResponse,
-)
-def post_create_reference(
-    project_id: str,
-    req: CreateReferenceRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> CreateReferenceResponse:
-    """Mint a new ref node and enqueue its initial generation.
-
-    Unlike vocab (direct-CRUD), refs are LLM-generated. The route
-    mints an empty ``ref_*`` node + ``reference`` edges to the
-    caller-supplied ``related_nodes``, then delegates to
-    :func:`bootstrap_feedback` to enqueue the initial generation
-    job — keeping the enqueue path inside the shared bootstrap
-    helper rather than duplicating it here.
-    """
-    _require_project(db, project_id)
-
-    name = req.name.strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="name cannot be empty")
-    if not req.seed_description.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="seed_description cannot be empty",
-        )
-
-    from backend.graph.references import reference_by_name
-
-    existing = reference_by_name(db, project_id, name)
-    if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Reference named {name!r} already exists in this project.",
-        )
-
-    # Validate related_nodes exist before minting so partial state
-    # isn't emitted on a bad request.
-    for related_id in req.related_nodes:
-        related = db.get(Node, related_id)
-        if related is None or related.project_id != project_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Related node {related_id!r} not found in project",
-            )
-
-    from backend.graph.ids import Kind, mint
-
-    ref_id = mint(db, Kind.REF)
-    # The seed description rides into the ref's content as a tiny
-    # ``<reference>`` shell, so the generate handler's regen prompt
-    # always has something to anchor against (even though refs are
-    # not frozen, the very first call still needs a hint). The
-    # validator accepts this minimal shape.
-    seed_xml = (
-        f"<reference><title>{name}</title><body>{req.seed_description.strip()}</body></reference>"
-    )
-    append_event(
-        db,
-        project_id,
-        ev.NodeCreated(
-            node_id=ref_id,
-            tier="ref",
-            kind="domain",
-            parent_id=None,
-            name=name,
-            content=seed_xml,
-        ),
-    )
-    for related_id in req.related_nodes:
-        edge_id = mint(db, Kind.EDGE)
-        append_event(
-            db,
-            project_id,
-            ev.EdgeCreated(
-                edge_id=edge_id,
-                edge_type="reference",
-                source_id=ref_id,
-                target_id=related_id,
-            ),
-        )
-    commit_and_publish(db, project_id)
-
-    feedback_result = bootstrap_feedback(
-        db,
-        project_id,
-        (ref_id,),
-        "",  # initial generation — no feedback yet
-        REFERENCE_CONFIG,
-        _require_project,
-        # No auto-revision on initial create — this path kicks off
-        # first-pass generation; the user hasn't seen a draft yet
-        # to critique.
-        auto_revisions_requested=0,
-    )
-    return CreateReferenceResponse(ref_id=ref_id, job_id=feedback_result["job_id"])
-
-
-@router.post(
-    "/{project_id}/references/{ref_id}/feedback",
-    response_model=FeedbackResponse,
-)
-def post_reference_feedback(
-    project_id: str,
-    ref_id: str,
-    req: FeedbackRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> FeedbackResponse:
-    """Regenerate a reference with optional prose feedback.
-
-    Refs are NOT frozen after approval (``has_been_approved`` is
-    ``None`` on ``REFERENCE_CONFIG``), so the bootstrap helper's
-    freeze-gate check is skipped and feedback works in any state.
-    """
-    return FeedbackResponse(
-        **bootstrap_feedback(
-            db,
-            project_id,
-            (ref_id,),
-            req.feedback,
-            REFERENCE_CONFIG,
-            _require_project,
-            auto_revisions_requested=req.auto_revisions_requested,
-        )
-    )
-
-
-@router.post(
-    "/{project_id}/references/{ref_id}/approve",
-    response_model=DiscardResponse,
-)
-def post_reference_approve(
-    project_id: str,
-    ref_id: str,
-    req: DraftIdRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> DiscardResponse:
-    """Approve a pending ref draft, committing its content to Node.content."""
-    bootstrap_approve(
-        db,
-        project_id,
-        (ref_id,),
-        req.draft_id,
-        REFERENCE_CONFIG,
-        _require_project,
-    )
-    return DiscardResponse(ok=True)
-
-
-@router.post(
-    "/{project_id}/references/{ref_id}/discard",
-    response_model=DiscardResponse,
-)
-def post_reference_discard(
-    project_id: str,
-    ref_id: str,
-    req: DraftIdRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> DiscardResponse:
-    """Discard a pending ref draft and re-enqueue a fresh generation.
-
-    Same auto-regen behaviour as every other bootstrap tier — the
-    user is presumably iterating on the draft, so dropping the
-    pending one and immediately re-running matches the bootstrap
-    chain's UX.
-    """
-    return DiscardResponse(
-        **bootstrap_discard(
-            db,
-            project_id,
-            (ref_id,),
-            req.draft_id,
-            REFERENCE_CONFIG,
-            _require_project,
-        )
-    )
-
-
-@router.post(
-    "/{project_id}/references/{ref_id}/cancel",
-    response_model=CancelResponse,
-)
-def post_reference_cancel(
-    project_id: str,
-    ref_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> CancelResponse:
-    """Stop any queued/running generation for this reference."""
-    return CancelResponse(
-        **bootstrap_cancel(
-            db,
-            project_id,
-            (ref_id,),
-            REFERENCE_CONFIG,
-            _require_project,
-        )
-    )
-
-
-@router.post("/{project_id}/references/{ref_id}/delete")
-def post_reference_delete(
-    project_id: str,
-    ref_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> dict[str, str]:
-    """Delete a ref node (and cascade-delete its reference edges)."""
-    _require_project(db, project_id)
-    node = _ref_get_node(db, project_id, ref_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
-    append_event(db, project_id, ev.NodeDeleted(node_id=ref_id))
-    commit_and_publish(db, project_id)
-    return {"status": "deleted", "ref_id": ref_id}
-
-
-@router.post(
-    "/{project_id}/edges/reference",
-    response_model=ReferenceEdgeResponse,
-)
-def post_add_reference_edge(
-    project_id: str,
-    req: AddReferenceEdgeRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ReferenceEdgeResponse:
-    """Add a ``reference`` edge from ``source_id`` to ``target_id``.
-
-    Either endpoint can be any node in the project — the edge type
-    is general-purpose advisory context, not specific to refs.
-    Refuses to create a duplicate edge (409) and refuses dangling
-    references (404).
-    """
-    _require_project(db, project_id)
-    if req.source_id == req.target_id:
-        raise HTTPException(
-            status_code=422,
-            detail="source_id and target_id must differ",
-        )
-    source = db.get(Node, req.source_id)
-    if source is None or source.project_id != project_id:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Source node {req.source_id!r} not found in project",
-        )
-    target = db.get(Node, req.target_id)
-    if target is None or target.project_id != project_id:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Target node {req.target_id!r} not found in project",
-        )
-    existing = db.execute(
-        select(Edge).where(
-            Edge.project_id == project_id,
-            Edge.edge_type == "reference",
-            Edge.source_id == req.source_id,
-            Edge.target_id == req.target_id,
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="A reference edge between these nodes already exists",
-        )
-    from backend.graph.ids import Kind, mint
-
-    edge_id = mint(db, Kind.EDGE)
-    append_event(
-        db,
-        project_id,
-        ev.EdgeCreated(
-            edge_id=edge_id,
-            edge_type="reference",
-            source_id=req.source_id,
-            target_id=req.target_id,
-        ),
-    )
-    commit_and_publish(db, project_id)
-    return ReferenceEdgeResponse(
-        edge_id=edge_id,
-        source_id=req.source_id,
-        target_id=req.target_id,
-    )
-
-
-@router.delete(
-    "/{project_id}/edges/reference",
-    response_model=DiscardResponse,
-)
-def post_remove_reference_edge(
-    project_id: str,
-    req: RemoveReferenceEdgeRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> DiscardResponse:
-    """Delete the ``reference`` edge between two nodes."""
-    _require_project(db, project_id)
-    edge = db.execute(
-        select(Edge).where(
-            Edge.project_id == project_id,
-            Edge.edge_type == "reference",
-            Edge.source_id == req.source_id,
-            Edge.target_id == req.target_id,
-        )
-    ).scalar_one_or_none()
-    if edge is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(f"No reference edge between {req.source_id!r} and {req.target_id!r}"),
-        )
-    append_event(db, project_id, ev.EdgeDeleted(edge_id=edge.id))
-    commit_and_publish(db, project_id)
-    return DiscardResponse(ok=True)
 
 
 # ── Phase-11 followup B9: aggregate feedback history ──────────────

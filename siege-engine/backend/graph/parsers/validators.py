@@ -3742,9 +3742,8 @@ def parse_and_validate_reference(raw: str) -> ReferenceEntry:
 
     Raises :class:`ParseError` if the ``<reference>`` root tag is
     missing (via ``extract_tag_tree``), or :class:`ValidationError`
-    if the grammar check fails. Used by the generate_reference
-    handler's parse-validate loop and by the route-level
-    authoring-time content check.
+    if the grammar check fails. Used by the v3 git-backed write
+    surface and the route-level authoring-time content check.
     """
     tree = extract_tag_tree(raw, "reference")
     return validate_reference(tree, raw_content=raw)

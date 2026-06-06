@@ -1,16 +1,15 @@
 """HTTP routes for v3 git-backed references.
 
-The legacy ``POST /api/projects/<id>/references/create`` endpoint
-stays alive for the dashboard's existing seed-expansion flow. This
-module adds the v3 alternative:
+Refs author through the ``/create_ref`` Claude Code skill, which
+calls ``siege.cli create-ref`` to mint the id, write the body to
+``refs/<ref_id>/body.md`` in the project repo, push the commit,
+and then POST here to register the node + git coordinates. The
+server does NOT call the LLM.
 
-- ``POST /api/projects/<id>/references`` — register a ref whose
-  body lives in the project repo at ``refs/<ref_id>/body.md``.
-  The caller has already committed + pushed; the request payload
-  carries ``{ref_id, name, body_sha, body_path}`` and the server
-  records the ref node + git coordinates without calling the LLM.
+- ``POST /api/projects/<id>/references`` — register a v3 ref.
+  Payload carries ``{ref_id, name, body_sha, body_path}``.
 - ``GET /api/projects/<id>/references/by-name?name=...`` — name
-  lookup so the CLI can avoid creating a duplicate ref by name.
+  lookup so the CLI can avoid duplicating a ref by name.
 
 Reading body content: ``resolve_ref_body`` (below) prefers git
 when ``body_sha`` is set, falls back to ``Node.content`` on git

@@ -551,11 +551,6 @@ def regen_job_for_node(project_id: str, node: Node) -> tuple[str, dict] | None:
             "v2.generate_impl",
             {**base, "owner_id": node.parent_id, "feedback": None},
         )
-    if tier == "ref":
-        return (
-            "v2.generate_reference",
-            {**base, "ref_id": node.id, "feedback": None},
-        )
     return None
 
 

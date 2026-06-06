@@ -1,9 +1,9 @@
 """HTTP routes for v3 git-backed vocabulary entries.
 
-Same shape as ``references_git_routes`` — vocab entries move to
-"body in git, state in Postgres" the same way refs did. The
-legacy vocab CRUD endpoints in ``routes.py`` stay alive during
-the migration but are retired in a follow-up sweep.
+Same shape as ``references_git_routes`` — vocab entries live in
+the project repo at ``vocab/<vocab_id>/body.md`` with state
+projected into Postgres. Authoring goes through the
+``/create_vocab`` Claude Code skill + ``siege.cli create-vocab``.
 
 - ``POST /api/projects/<id>/vocabulary`` — register a v3 vocab
   entry whose body lives at ``vocab/<vocab_id>/body.md``.

@@ -271,23 +271,40 @@ dashboards, supporting modules) is gone.
   generation via CC skills.
 - ~40 test files for the deleted per-tier surface — gone.
 
-**What still stands (deferred to the refs+vocab preservation
-round):**
+**Refs + vocab preservation pass — DONE:**
 
-- `backend/graph/bootstrap_routes.py` — the surviving
-  `BootstrapTierConfig` + `bootstrap_get_state` / `_feedback` /
-  `_approve` / `_discard` / `_cancel` helpers + `_latest_telemetry`.
-  Refs use these. Full retirement is gated on refs migrating to a
-  v3 write path (siege CLI + skill).
-- `backend/graph/handlers/generate_reference.py` +
-  `prompts/reference.py` + `references.py` + `vocabulary.py` —
-  the refs+vocab backend, untouched.
+- v3 git-backed routes (`references_git_routes.py` +
+  `vocabulary_git_routes.py`) handle all writes. Bodies live in
+  the project repo at `refs/<ref_id>/body.md` and
+  `vocab/<vocab_id>/body.md`; the server records git coordinates
+  and never calls the LLM.
+- `siege.cli create-ref` / `create-vocab` write the body file,
+  commit, push, and POST to register. Skills (`/create_ref`,
+  `/create_vocab`) shell out to the CLI.
+- Dashboard refs + vocab UI went read-only: `CreateReferenceDialog`
+  / `CreateVocabEntryDialog` deleted, panels rewritten without
+  mutation hooks, write methods stripped from
+  `api/references.ts` + `api/vocabulary.ts`.
+- Backend retirement: deleted `bootstrap_routes.py`,
+  `handlers/generate_reference.py`, `handlers/_tier_generation.py`,
+  `handlers/_bootstrap_generation.py`, `prompts/reference.py`,
+  `running.py`. Trimmed `routes.py` from 1806 → 1024 LOC (all
+  legacy ref/vocab write endpoints + `REFERENCE_CONFIG` removed).
+  Slimmed `references.py` + `vocabulary.py` to simple lookups
+  (LLM-prompt rendering helpers gone — context now built in the
+  v3 projection layer).
+- `fanout.py` drops the `tier == "ref"` regen-enqueue branch.
+  `backend/graph/__init__.py` no longer registers
+  `generate_reference`.
+- `pipeline/queue.py` drops the `TierDeferredError` handling +
+  `_complete_deferred_job_sync` (only used by `_tier_generation`).
+
+**What still stands:**
+
 - `backend/graph/handlers/{expand_single_feature,rename_rewrite}.py` —
   used by the apply-instruction (pending-edit) flow.
-- `backend/graph/handlers/_tier_generation.py` +
-  `_bootstrap_generation.py` — refs uses them.
 - `backend/cli/manager.py` + `backend/pipeline/` — still needed by
-  refs + apply-instruction.
+  apply-instruction.
 - Legacy persistence layer (SQLAlchemy + alembic + models) —
   untouched.
 
@@ -318,18 +335,12 @@ npx vite build
 
 ## Next gates (in order)
 
-1. **Refs + vocab preservation pass**: design the v3 write path
-   for references and vocabulary (siege CLI subcommands + matching
-   Claude Code skills + the dashboard's read-only refs/vocab
-   panels reading through siege). Once refs writes leave
-   `bootstrap_routes.py`, the file can be deleted entirely.
-2. **Final backend shrink** (post-refs): delete the apply-
-   instruction / pending-edit machinery if the dashboard's
-   feature-proposal flow follows refs to CC skills; delete the
-   matching feature-expansion + rename-rewrite handlers; delete
-   `bootstrap_routes.py`, `_tier_generation.py`,
-   `_bootstrap_generation.py`, `backend/cli/`, `backend/pipeline/`.
-3. **Persistence retirement** (last): drop the SQLAlchemy
+1. **Final backend shrink**: delete the apply-instruction /
+   pending-edit machinery if the dashboard's feature-proposal
+   flow follows refs to CC skills; delete the matching
+   feature-expansion + rename-rewrite handlers; delete
+   `backend/cli/`, `backend/pipeline/`.
+2. **Persistence retirement** (last): drop the SQLAlchemy
    projections, alembic migrations, websocket, and the rest of
    the SQL backend once no surviving endpoint reads or writes
    them. End state matches `docs/migration/deletion-inventory.md`'s
