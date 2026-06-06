@@ -44,6 +44,7 @@ def build_generation_context(view: GitView, scope: Scope) -> dict[str, Any]:
             "sub_id": None,
         },
         "status": self_state.status if self_state else "absent",
+        "input_docs": view.input_docs(),
         "sibling_features": sibling_summaries,
         "prior_review_text": (
             self_state.draft.prior_review_text if self_state and self_state.draft else ""

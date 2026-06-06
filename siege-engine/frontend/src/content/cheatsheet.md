@@ -165,6 +165,18 @@ The `impl` and `fanin` draft / review / regen skills take an optional
 `phase` — set it for a phased node and the skill computes the `p<N>`
 path layout and stamps schema v2; omit it for an unphased project.
 
+### Single-feature authoring
+
+- `add-feature` — Mechanical append of a `<feature>` block. You supply
+  `name` and `intent` verbatim; the CLI mints a fresh `feat_*` id and
+  flips the substrate state back to `drafted`. No LLM.
+- `propose-feature` — LLM-shaped sibling to `add-feature`. You supply a
+  one-line `description` (and optionally a `name_hint`); the skill
+  canonicalizes a `<name>` + `<intent>` from the input doc + existing
+  feature list, then calls `add-feature` underneath. Use when you have
+  a rough sketch and want the canonical pair written for you.
+- `remove-feature` — Mechanical delete by `feat-id` or `name`.
+
 ### Shared
 
 - `mint-plan` — Compute + materialize the phasing plan: `state/plan.json`
