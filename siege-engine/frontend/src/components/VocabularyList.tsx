@@ -2,8 +2,6 @@ import { useState } from 'react';
 import type { VocabEntry } from '../api/vocabulary';
 import { parseVocabEntry } from '../api/vocabulary';
 import { useProjectVocabulary } from '../hooks/queries/useVocabularyQueries';
-import { useDeleteVocabMutation } from '../hooks/mutations/useVocabularyMutations';
-import { CreateVocabEntryDialog } from './CreateVocabEntryDialog';
 import { PendingVocabularySection } from './PendingVocabularySection';
 import { VocabularyEntryDetail } from './VocabularyEntry';
 
@@ -12,24 +10,16 @@ interface Props {
 }
 
 /**
- * Project vocabulary list view. Two sections: project-level
- * terms first, then feature-local terms grouped by owning
- * feature. Each entry is clickable and opens a detail panel.
- * A "+ Add term" button opens the creation dialog.
+ * Project vocabulary list view (read-only).
  *
- * The list is driven by the ``useProjectVocabulary`` hook
- * which polls the ``GET /api/projects/{id}/vocabulary``
- * endpoint. No live updates — mutations invalidate the query
- * key on success, triggering a refetch.
+ * Two sections: project-level terms first, then feature-local
+ * terms grouped by owning feature. Authoring happens in Claude
+ * Code via the `/create_vocab` skill — the dashboard is a
+ * projection of the git-resident vocab folder.
  */
 export function VocabularyList({ projectId }: Props) {
   const { data, isLoading, error } = useProjectVocabulary(projectId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [createInitialScope, setCreateInitialScope] = useState<
-    'project' | 'feature'
-  >('project');
-  const deleteMutation = useDeleteVocabMutation(projectId);
 
   if (isLoading) {
     return (
@@ -56,27 +46,16 @@ export function VocabularyList({ projectId }: Props) {
   return (
     <div className="flex h-full">
       <div className="w-1/2 overflow-auto border-r border-gray-800 p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-bold text-white">Vocabulary</h2>
-          <button
-            type="button"
-            className="text-xs px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-white"
-            onClick={() => {
-              setCreateInitialScope('project');
-              setCreateDialogOpen(true);
-            }}
-          >
-            + Add term
-          </button>
-        </div>
+        <h2 className="text-sm font-bold text-white mb-4">Vocabulary</h2>
 
         <PendingVocabularySection projectId={projectId} />
 
         {entries.length === 0 && (
           <p className="text-sm text-gray-500 italic">
-            No vocabulary defined yet. Use "+ Add term" to define
-            project-specific terms that downstream generations will
-            always see in context.
+            No vocabulary defined yet. Run{' '}
+            <code className="text-gray-300">/create_vocab</code> in
+            Claude Code to define project-specific terms that
+            downstream generations will always see in context.
           </p>
         )}
 
@@ -127,29 +106,14 @@ export function VocabularyList({ projectId }: Props) {
       <div className="w-1/2 overflow-auto p-4">
         {selectedId ? (
           <VocabularyEntryDetail
-            projectId={projectId}
             entry={entries.find((e) => e.id === selectedId) ?? null}
-            onDelete={() => {
-              if (!selectedId) return;
-              deleteMutation.mutate(selectedId, {
-                onSuccess: () => setSelectedId(null),
-              });
-            }}
           />
         ) : (
           <div className="text-sm text-gray-500 italic p-4">
-            Select a term to view or edit its definition.
+            Select a term to view its definition.
           </div>
         )}
       </div>
-
-      {createDialogOpen && (
-        <CreateVocabEntryDialog
-          projectId={projectId}
-          initialScope={createInitialScope}
-          onClose={() => setCreateDialogOpen(false)}
-        />
-      )}
     </div>
   );
 }

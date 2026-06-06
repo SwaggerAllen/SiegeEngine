@@ -1,12 +1,11 @@
 import { z } from 'zod';
 import api from './client';
 
-// Phase 5.5: project vocabulary layer. Vocab entries are a
-// first-class node tier scoped via parent_id — null for
-// project-level, a feat_* id for feature-local. Content is
-// raw <vocab-entry> XML on the server; the frontend renders
-// it with light structure extraction for display, and submits
-// user edits as raw XML blocks the server re-validates.
+// Project vocabulary layer (read-only on the dashboard). Vocab
+// entries' bodies live in the project repo at
+// `vocab/<vocab_id>/body.md`; the dashboard reads the projected
+// state via the v3 endpoints. Authoring happens in Claude Code
+// via the `/create_vocab` skill.
 
 export const VocabEntrySchema = z.object({
   id: z.string(),
@@ -48,101 +47,6 @@ export async function getVocabularyEntry(
     `/projects/${projectId}/vocabulary/${vocabId}`
   );
   return VocabEntrySchema.parse(data);
-}
-
-export async function createVocabEntry(
-  projectId: string,
-  name: string,
-  content: string,
-  parentId: string | null
-): Promise<VocabEntry> {
-  const { data } = await api.post(
-    `/projects/${projectId}/vocabulary/create`,
-    { name, content, parent_id: parentId }
-  );
-  return VocabEntrySchema.parse(data);
-}
-
-export async function editVocabEntry(
-  projectId: string,
-  vocabId: string,
-  newContent: string
-): Promise<VocabEntry> {
-  const { data } = await api.post(
-    `/projects/${projectId}/vocabulary/${vocabId}/edit`,
-    { new_content: newContent }
-  );
-  return VocabEntrySchema.parse(data);
-}
-
-export async function renameVocabEntry(
-  projectId: string,
-  vocabId: string,
-  newName: string
-): Promise<VocabEntry> {
-  const { data } = await api.post(
-    `/projects/${projectId}/vocabulary/${vocabId}/rename`,
-    { new_name: newName }
-  );
-  return VocabEntrySchema.parse(data);
-}
-
-export async function reparentVocabEntry(
-  projectId: string,
-  vocabId: string,
-  newParentId: string | null
-): Promise<VocabEntry> {
-  const { data } = await api.post(
-    `/projects/${projectId}/vocabulary/${vocabId}/reparent`,
-    { new_parent_id: newParentId }
-  );
-  return VocabEntrySchema.parse(data);
-}
-
-export async function deleteVocabEntry(
-  projectId: string,
-  vocabId: string
-): Promise<void> {
-  await api.post(`/projects/${projectId}/vocabulary/${vocabId}/delete`);
-}
-
-// Build a canonical <vocab-entry> XML block from the three
-// structured fields the creation/edit form collects. The
-// server re-parses and re-validates this; the frontend's role
-// is just to construct well-formed XML so the validator
-// accepts it without the user having to hand-write markup.
-export function buildVocabEntryXml(
-  definition: string,
-  disambiguation: string | null,
-  seeAlsoNames: string[]
-): string {
-  const parts: string[] = ['<vocab-entry>'];
-  parts.push(`<definition>${escapeXml(definition)}</definition>`);
-  if (disambiguation && disambiguation.trim()) {
-    parts.push(
-      `<disambiguation>${escapeXml(disambiguation)}</disambiguation>`
-    );
-  }
-  if (seeAlsoNames.length > 0) {
-    parts.push('<see-also>');
-    for (const name of seeAlsoNames) {
-      parts.push(`<ref name="${escapeAttr(name)}"/>`);
-    }
-    parts.push('</see-also>');
-  }
-  parts.push('</vocab-entry>');
-  return parts.join('');
-}
-
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-function escapeAttr(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
 // Parse a stored <vocab-entry> XML block into its three
