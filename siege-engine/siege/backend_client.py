@@ -1,4 +1,4 @@
-"""Thin HTTP client for the legacy siege backend's write endpoints.
+"""Local helpers + thin HTTP client for the legacy siege backend.
 
 Most siege CLI write subcommands operate purely on the local repo
 — they edit body files, commit, push, and let the deployed
@@ -27,9 +27,27 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import urllib.error
 import urllib.request
 from typing import Any
+
+# Crockford base32 — matches backend.graph.ids._CROCKFORD so locally-minted
+# ids round-trip cleanly through the server's id-grammar validator.
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_ID_SUFFIX_LENGTH = 8
+
+
+def mint_id(prefix: str) -> str:
+    """Mint a fresh ``<prefix>_<Crockford-base32>`` id.
+
+    Used by CLI subcommands that need a stable id before the
+    server has minted one (e.g. ``create-ref`` writes a body file
+    at ``refs/<ref_id>/body.md`` and needs the id pre-commit). The
+    server validates the id grammar on accept.
+    """
+    suffix = "".join(secrets.choice(_CROCKFORD) for _ in range(_ID_SUFFIX_LENGTH))
+    return f"{prefix}_{suffix}"
 
 
 class BackendError(RuntimeError):
@@ -122,3 +140,42 @@ def create_input_document(
 def list_input_documents(project_id: str) -> list[dict[str, Any]]:
     resp = get(f"/api/projects/{project_id}/input-documents")
     return resp.get("input_documents", []) if isinstance(resp, dict) else []
+
+
+# ── References ───────────────────────────────────────────────────────
+
+
+def create_git_reference(
+    project_id: str,
+    ref_id: str,
+    name: str,
+    body_sha: str,
+    body_path: str | None = None,
+) -> dict[str, Any]:
+    """Register a git-resident ref on the backend.
+
+    Caller has already minted the ref id, written the body to
+    ``body_path`` in the project repo, and pushed the commit.
+    """
+    payload: dict[str, Any] = {
+        "ref_id": ref_id,
+        "name": name,
+        "body_sha": body_sha,
+    }
+    if body_path is not None:
+        payload["body_path"] = body_path
+    return post(f"/api/projects/{project_id}/references", payload)
+
+
+def get_reference_by_name(project_id: str, name: str) -> dict[str, Any] | None:
+    """Look up a ref by name; returns ``None`` if absent."""
+    from urllib.parse import quote
+
+    return get(f"/api/projects/{project_id}/references/by-name?name={quote(name)}")
+
+
+def list_references(project_id: str) -> list[dict[str, Any]]:
+    """List all refs in a project (read uses the legacy endpoint
+    that returns both legacy and v3 refs uniformly)."""
+    resp = get(f"/api/projects/{project_id}/references")
+    return resp.get("references", []) if isinstance(resp, dict) else []
