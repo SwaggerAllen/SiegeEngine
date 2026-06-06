@@ -14,7 +14,6 @@ from backend.graph.instructions import (
     Demote,
     Merge,
     Promote,
-    ProposeFeature,
     ReassignMapping,
     RemoveDependency,
     RemoveDomainParent,
@@ -39,22 +38,6 @@ _FIXTURES = [
     (
         Create(node_id="comp_ABCDEFGH", tier="comp", name="Orphan"),
         '- Create comp "Orphan" (comp_ABCDEFGH)',
-    ),
-    (
-        ProposeFeature(
-            node_id="feat_ABCDEFGH",
-            name_hint="(proposing) Profile editing",
-            description="Profile editing with avatar upload",
-        ),
-        '- Propose feature "Profile editing with avatar upload" (feat_ABCDEFGH)',
-    ),
-    (
-        ProposeFeature(
-            node_id="feat_ABCDEFGH",
-            name_hint="(proposing) long",
-            description=("x" * 80),
-        ),
-        f'- Propose feature "{"x" * 60}…" (feat_ABCDEFGH)',
     ),
     (
         Delete(node_id="comp_ABCDEFGH", name="Foo"),
@@ -212,7 +195,8 @@ class TestSchemaRejection:
 
     def test_create_rejects_feat_tier(self):
         # ``feat`` was removed from Create.tier — content-less feat
-        # nodes are useless to the reqs generator. ProposeFeature is
-        # the only path to add a feat.
+        # nodes are useless to the reqs generator. The v3 substrate's
+        # /propose_feature and /add_feature skills handle feat
+        # authoring (body in git, intent paragraph included).
         with pytest.raises(ValidationError):
             Create(node_id="feat_AAAAAAAA", tier="feat", name="X")  # type: ignore[arg-type]

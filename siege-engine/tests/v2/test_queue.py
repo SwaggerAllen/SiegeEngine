@@ -13,7 +13,6 @@ from backend.graph.instructions import (
     AddDependency,
     Create,
     Delete,
-    ProposeFeature,
     Rename,
 )
 from backend.graph.reducer import append_event
@@ -254,119 +253,6 @@ class TestApplyHandler:
         terminal = captured[-1]
         assert terminal.event_type == "QueueApplied"
         assert set(terminal.node_ids) >= {a, b}
-
-    def test_propose_feature_row_stays_running_no_cascade(self, db, project, monkeypatch):
-        """A single ProposeFeature row defers cascade and stays running.
-
-        The apply handler should:
-        - Emit NodeCreated for the placeholder feat (visible immediately).
-        - Enqueue a v2.expand_single_feature job carrying the row id.
-        - Leave the row in ``running`` (the expansion job flips it later).
-        - Skip the end-of-apply flush_pending_regens (deferred to the
-          batch-completion check in the expansion handler).
-        """
-        from backend.graph.handlers.expand_single_feature import (
-            EXPAND_SINGLE_FEATURE_JOB_TYPE,
-        )
-
-        feat_id = "feat_PROPOSE1"
-        q.enqueue_instruction(
-            db,
-            project.id,
-            ProposeFeature(
-                node_id=feat_id,
-                name_hint="(proposing) X",
-                description="X capability",
-            ),
-        )
-        q.apply_pending_queue(db, project.id)
-        self._patch_session(db, monkeypatch)
-        asyncio.run(q._apply_instructions_handler({"project_id": project.id}))
-
-        rows = db.query(PendingInstruction).filter_by(project_id=project.id).all()
-        assert len(rows) == 1
-        # Row stays running — flip to applied happens in expansion handler.
-        assert rows[0].status == "running"
-
-        # Placeholder feat node landed.
-        from backend.models.node import Node
-
-        assert db.get(Node, feat_id) is not None
-
-        # Expansion job enqueued with the source row id.
-        exp_jobs = db.query(Job).filter_by(job_type=EXPAND_SINGLE_FEATURE_JOB_TYPE).all()
-        assert len(exp_jobs) == 1
-        assert exp_jobs[0].payload["source_pending_instruction_id"] == rows[0].id
-
-    def test_propose_feature_in_mixed_batch_defers_cascade(self, db, project, monkeypatch):
-        """Mixed (sync + ProposeFeature) batch defers cascade.
-
-        Even though the synchronous Create row succeeds, the handler
-        must skip the end-of-apply ``flush_pending_regens`` call so
-        the consolidated cascade only fires once the whole batch
-        completes.
-        """
-        from backend.graph.handlers.expand_single_feature import (
-            EXPAND_SINGLE_FEATURE_JOB_TYPE,
-        )
-
-        # Pre-existing top-level resp parent for the Create row.
-        parent_id = mint(db, Kind.RESP)
-        append_event(
-            db,
-            project.id,
-            ev.NodeCreated(node_id=parent_id, tier="resp", kind="domain", name="Parent"),
-        )
-
-        q.enqueue_instruction(
-            db,
-            project.id,
-            Create(
-                node_id="comp_NEWCMP01",
-                tier="comp",
-                name="NewComp",
-                parent_id=parent_id,
-            ),
-        )
-        q.enqueue_instruction(
-            db,
-            project.id,
-            ProposeFeature(
-                node_id="feat_PROPOSE2",
-                name_hint="(proposing) Y",
-                description="Y capability",
-            ),
-        )
-        q.apply_pending_queue(db, project.id)
-        self._patch_session(db, monkeypatch)
-        asyncio.run(q._apply_instructions_handler({"project_id": project.id}))
-
-        rows = (
-            db.query(PendingInstruction)
-            .filter_by(project_id=project.id)
-            .order_by(PendingInstruction.sequence.asc())
-            .all()
-        )
-        # Sync row flipped to applied; propose row stays running.
-        assert [r.status for r in rows] == ["applied", "running"]
-
-        # Expansion job enqueued for the propose row.
-        exp_jobs = db.query(Job).filter_by(job_type=EXPAND_SINGLE_FEATURE_JOB_TYPE).all()
-        assert len(exp_jobs) == 1
-
-        # Crucially: NO synchronous regen fired at end-of-apply.
-        # If flush_pending_regens had run, it could have enqueued a
-        # comparch / sysarch / reqs regen for any structural change.
-        # The deferred contract guarantees those land only when the
-        # last running row in the batch flips.
-        cascade_job_types = {
-            "v2.generate_comparch",
-            "v2.generate_subcomparch",
-            "v2.generate_sysarch",
-            "v2.generate_requirements",
-        }
-        cascade_jobs = db.query(Job).filter(Job.job_type.in_(cascade_job_types)).all()
-        assert cascade_jobs == []
 
     def test_failure_publishes_queue_failed(self, db, project, monkeypatch):
         # Queue a Delete against a non-existent node so the dispatcher raises.

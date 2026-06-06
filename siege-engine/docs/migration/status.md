@@ -260,8 +260,9 @@ dashboards, supporting modules) is gone.
   `bootstrap_retry_review`, `wipe_node`, `bootstrap_reset`,
   `bootstrap_prompt_preview`.
 - `backend/graph/__init__.py` drops 17 handler registrations;
-  only `rename_rewrite`, `expand_single_feature`, and
-  `generate_reference` survive alongside `apply_instructions`.
+  only `rename_rewrite` survives alongside `apply_instructions`.
+  `generate_reference` retired with refs+vocab;
+  `expand_single_feature` retired with feature-expansion.
 - `backend/graph/running.py` rewritten as a refs-only
   tracker — non-ref tier nodes don't get
   generation_running/has_error badges anymore (the dashboard
@@ -299,10 +300,30 @@ dashboards, supporting modules) is gone.
 - `pipeline/queue.py` drops the `TierDeferredError` handling +
   `_complete_deferred_job_sync` (only used by `_tier_generation`).
 
+**Feature-expansion preservation pass — DONE:**
+
+- `expand_single_feature.py` handler + its prompt module deleted;
+  the legacy `ProposeFeature` instruction retired alongside.
+- `apply_instruction.dispatch_instruction` no longer half-async —
+  every branch emits events synchronously, the queue handler's
+  `defers_cascade` / `any_deferred` machinery is gone, and
+  `dispatch_instruction` returns `None`.
+- Dashboard `FeatRespEditorPanel` propose-feature dialog replaced
+  with a banner pointing at the new skills.
+- New `/propose_feature` Claude Code skill wraps an LLM around
+  `siege add-feature` so the chat-driven "user gives a one-liner
+  + skill canonicalizes name + intent" UX rides on the v3 substrate.
+- `siege.git_view.GitView.input_docs()` + a new `input_docs` key
+  on `feature_expansion`'s generation context bundle let the
+  skill (and the existing `draft-feature-expansion` /
+  `regen-feature-expansion-with-feedback` skills) see project
+  input docs without server help.
+
 **What still stands:**
 
-- `backend/graph/handlers/{expand_single_feature,rename_rewrite}.py` —
-  used by the apply-instruction (pending-edit) flow.
+- `backend/graph/handlers/rename_rewrite.py` — used by the
+  apply-instruction (pending-edit) flow's only remaining
+  LLM-driven write path.
 - `backend/cli/manager.py` + `backend/pipeline/` — still needed by
   apply-instruction.
 - Legacy persistence layer (SQLAlchemy + alembic + models) —

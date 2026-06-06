@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { StructureNode } from '../../api/structure';
-import { mintClientId, type Instruction } from '../../api/queue';
+import { type Instruction } from '../../api/queue';
 import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 import { useEnqueueInstructionMutation } from '../../hooks/mutations/useQueueMutations';
 import { describeApiError } from '../../lib/describeApiError';
@@ -26,7 +26,6 @@ export function FeatRespEditorPanel({ projectId }: Props) {
   const enqueue = useEnqueueInstructionMutation(projectId);
   const [sourceId, setSourceId] = useState('');
   const [targetId, setTargetId] = useState('');
-  const [proposeText, setProposeText] = useState('');
 
   const feats = useMemo(
     () =>
@@ -107,22 +106,6 @@ export function FeatRespEditorPanel({ projectId }: Props) {
     });
   };
 
-  const onProposeFeature = () => {
-    const description = proposeText.trim();
-    if (!description) return;
-    const ins: Instruction = {
-      instruction_type: 'ProposeFeature',
-      node_id: mintClientId('feat'),
-      name_hint: `(proposing) ${description.slice(0, 30)}`,
-      description,
-    };
-    enqueue.mutate(ins, {
-      onSuccess: () => {
-        setProposeText('');
-      },
-    });
-  };
-
   const onPromoteFeat = (feat: StructureNode) => {
     if (
       !confirm(
@@ -172,32 +155,12 @@ export function FeatRespEditorPanel({ projectId }: Props) {
           Propose a new feature
         </h4>
         <p className="text-xs text-gray-400">
-          Sketch the feature in a sentence or two. The platform mints a
-          placeholder slot immediately and asks the model to fill in a
-          canonical name and intent paragraph. Reqs and sysarch
-          regenerate once the expansion lands; batched ProposeFeatures
-          in the same Apply collapse into a single downstream cascade.
+          Authoring moved to Claude Code. Run{' '}
+          <code className="text-gray-200">/propose_feature</code> with a
+          one-line sketch (LLM canonicalizes the name + intent), or{' '}
+          <code className="text-gray-200">/add_feature</code> when you
+          already have the name and intent in hand.
         </p>
-        <textarea
-          rows={3}
-          value={proposeText}
-          onChange={(e) => setProposeText(e.target.value)}
-          placeholder="e.g. User account management with profile editing and password change"
-          className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
-          data-testid="propose-feature-input"
-          disabled={enqueue.isPending}
-        />
-        <div className="flex justify-end">
-          <button
-            type="button"
-            className="rounded bg-blue-700 px-3 py-1 text-sm text-white hover:bg-blue-600 disabled:bg-gray-700 disabled:text-gray-400"
-            disabled={!proposeText.trim() || enqueue.isPending}
-            onClick={onProposeFeature}
-            data-testid="propose-feature-submit"
-          >
-            {enqueue.isPending ? 'Queuing…' : 'Queue propose'}
-          </button>
-        </div>
       </section>
 
       <section>

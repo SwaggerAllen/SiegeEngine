@@ -41,23 +41,15 @@ export const CreateInstrSchema = z.object({
   instruction_type: z.literal('Create'),
   node_id: z.string(),
   // ``feat`` is intentionally excluded — content-less feat nodes
-  // are useless to the reqs generator. New features go through
-  // ``ProposeFeature`` which mints the structural slot and
-  // enqueues an LLM expansion job to fill in name + intent.
+  // are useless to the reqs generator. New features go through the
+  // /propose_feature and /add_feature Claude Code skills (write the
+  // body file in the project repo + commit).
   tier: z.enum(['resp', 'comp', 'impl']),
   name: z.string(),
   parent_id: z.string().nullable().optional(),
   parent_name: z.string().nullable().optional(),
 });
 export type CreateInstr = z.infer<typeof CreateInstrSchema>;
-
-export const ProposeFeatureInstrSchema = z.object({
-  instruction_type: z.literal('ProposeFeature'),
-  node_id: z.string(),
-  name_hint: z.string(),
-  description: z.string(),
-});
-export type ProposeFeatureInstr = z.infer<typeof ProposeFeatureInstrSchema>;
 
 export const DeleteInstrSchema = z.object({
   instruction_type: z.literal('Delete'),
@@ -169,7 +161,6 @@ export type SetFeatureDeferredInstr = z.infer<typeof SetFeatureDeferredInstrSche
 
 export const InstructionSchema = z.discriminatedUnion('instruction_type', [
   CreateInstrSchema,
-  ProposeFeatureInstrSchema,
   DeleteInstrSchema,
   RenameInstrSchema,
   ReassignMappingInstrSchema,
@@ -269,11 +260,6 @@ export function renderInstruction(
         : '';
       return `Create ${s('tier')} "${s('name')}" (${s('node_id')})${parent}`;
     }
-    case 'ProposeFeature': {
-      const desc = s('description');
-      const trimmed = desc.length > 60 ? `${desc.slice(0, 60)}…` : desc;
-      return `Propose feature: ${trimmed}`;
-    }
     case 'Delete':
       return `Delete "${s('name')}" (${s('node_id')})`;
     case 'Rename':
@@ -351,7 +337,6 @@ export function affectedNodeIds(
 
   switch (type) {
     case 'Create':
-    case 'ProposeFeature':
     case 'Delete':
     case 'Rename':
     case 'ReassignMapping':

@@ -32,7 +32,6 @@ from sqlalchemy.orm import Session
 from backend.graph import events as ev
 from backend.graph import instructions as instr
 from backend.graph import queries
-from backend.graph.handlers.expand_single_feature import EXPAND_SINGLE_FEATURE_JOB_TYPE
 from backend.graph.handlers.rename_rewrite import RENAME_REWRITE_JOB_TYPE
 from backend.graph.ids import Kind, mint
 from backend.graph.reducer import append_event
@@ -61,35 +60,23 @@ def dispatch_instruction(
     db: Session,
     project_id: str,
     instruction: instr._InstructionBase,
-    source_pending_instruction_id: str | None = None,
-) -> bool:
+) -> None:
     """Translate ``instruction`` into one or more reducer events.
 
     Single dispatch function — match/case over ``instruction_type``.
     Each branch is narrow (3–10 lines) so this file stays scannable.
 
-    Returns ``True`` when the instruction is half-async — events are
-    emitted by a background job and the queue's pending-instruction
-    row should remain ``running`` until that job completes. The queue
-    handler uses this signal to suppress the row's flip-to-applied
-    and to skip the end-of-apply cascade-flush (the job's completion
-    handler fires the cascade instead). Returns ``False`` for the
-    common case (synchronous emission, row flips to ``applied``,
-    cascade fires at end of apply).
-
-    ``source_pending_instruction_id`` is the queue row that produced
-    this dispatch. Synchronous instructions don't need it; half-async
-    instructions (currently only ``ProposeFeature``) pass it into the
-    background job's payload so the job can flip its source row's
-    status on completion.
+    Every branch is synchronous: events emit inline and the queue
+    handler flips the row to ``applied`` and fires the end-of-apply
+    cascade on the next loop turn. ``Rename`` enqueues a follow-up
+    ``v2.rename_rewrite`` job but emits ``NodeRenamed`` from the job
+    itself; from this dispatcher's perspective the instruction is
+    still "synchronous on dispatch" — the row flips after the
+    enqueue lands.
     """
     match instruction:
         case instr.Create():
             _apply_create(db, project_id, instruction)
-        case instr.ProposeFeature():
-            return _apply_propose_feature(
-                db, project_id, instruction, source_pending_instruction_id
-            )
         case instr.Delete():
             _apply_delete(db, project_id, instruction)
         case instr.Rename():
@@ -130,7 +117,6 @@ def dispatch_instruction(
             raise InstructionApplyError(
                 f"No apply branch for instruction_type={instruction.instruction_type!r}"
             )
-    return False
 
 
 # ── Node ops ─────────────────────────────────────────────────────────
@@ -164,63 +150,6 @@ def _apply_create(db: Session, project_id: str, ins: instr.Create) -> None:
             name=ins.name,
         ),
     )
-
-
-def _apply_propose_feature(
-    db: Session,
-    project_id: str,
-    ins: instr.ProposeFeature,
-    source_pending_instruction_id: str | None,
-) -> bool:
-    """Half-async create of a feat node + LLM-driven content expansion.
-
-    Emits ``NodeCreated`` immediately (with the user's ``name_hint``
-    as a synthetic placeholder name and empty content), then enqueues
-    a ``v2.expand_single_feature`` job that will produce the canonical
-    name + intent paragraph, emit ``NodeRenamed`` + ``NodeContentUpdated``,
-    flip the source row to ``applied``, and trigger the consolidated
-    cascade if it's the last running row in the apply batch.
-
-    The feat→reqs decomposition edge is **not** minted here — the
-    expansion handler mints it on success once the content is known.
-    Minting it eagerly would race the fanout dispatcher: ``EdgeCreated``
-    fanout would mark the reqs target stale based on a still-empty
-    source feat, producing a downstream cascade against garbage input.
-
-    Returns ``True`` to signal the queue handler that this row's
-    completion is deferred to the background expansion job.
-    """
-    # SOURCE_PENDING_INSTRUCTION_ID is required for ProposeFeature so
-    # the expansion handler can flip the row to applied / failed.
-    # The queue handler always passes it; defend the contract here.
-    if source_pending_instruction_id is None:
-        raise InstructionApplyError(
-            "ProposeFeature dispatched without source_pending_instruction_id; "
-            "the queue handler must pass it through so the expansion job can "
-            "flip the row's status on completion."
-        )
-    append_event(
-        db,
-        project_id,
-        ev.NodeCreated(
-            node_id=ins.node_id,
-            tier="feat",
-            kind="domain",
-            parent_id=None,
-            name=ins.name_hint,
-        ),
-    )
-    pipeline_queue.enqueue(
-        db,
-        job_type=EXPAND_SINGLE_FEATURE_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "feat_node_id": ins.node_id,
-            "description": ins.description,
-            "source_pending_instruction_id": source_pending_instruction_id,
-        },
-    )
-    return True
 
 
 def _apply_delete(db: Session, project_id: str, ins: instr.Delete) -> None:

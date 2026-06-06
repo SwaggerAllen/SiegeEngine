@@ -199,9 +199,8 @@ describe('FeatRespEditorPanel', () => {
     });
   });
 
-  it('enqueues a ProposeFeature instruction with description and synthetic name_hint', async () => {
+  it('points users at the /propose_feature and /add_feature skills', async () => {
     mockedStructure.mockResolvedValue(structure());
-    mockedEnqueue.mockResolvedValue({ sequence: 7 });
     render(
       <TestQueryWrapper>
         <FeatRespEditorPanel projectId="p1" />
@@ -210,23 +209,8 @@ describe('FeatRespEditorPanel', () => {
     await waitFor(() =>
       expect(screen.getByText(/Propose a new feature/i)).toBeInTheDocument(),
     );
-    const submit = screen.getByTestId('propose-feature-submit');
-    expect(submit).toBeDisabled();
-    await userEvent.type(
-      screen.getByTestId('propose-feature-input'),
-      'User account management with profile editing and password change',
-    );
-    expect(submit).toBeEnabled();
-    await userEvent.click(submit);
-    expect(mockedEnqueue).toHaveBeenCalledTimes(1);
-    const [, instruction] = mockedEnqueue.mock.calls[0];
-    expect(instruction).toMatchObject({
-      instruction_type: 'ProposeFeature',
-      description:
-        'User account management with profile editing and password change',
-    });
-    expect(instruction.node_id).toMatch(/^feat_[0-9A-HJKMNP-TV-Z]{8}$/);
-    expect(instruction.name_hint).toMatch(/^\(proposing\)/);
+    expect(screen.getByText(/\/propose_feature/)).toBeInTheDocument();
+    expect(screen.getByText(/\/add_feature/)).toBeInTheDocument();
   });
 
   it('renders a deferred feature dimmed with an un-defer affordance', async () => {
