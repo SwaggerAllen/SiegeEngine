@@ -5,13 +5,12 @@ can land new preferences without a migration each time, but every
 *reader* goes through :class:`ProjectSettings` so defaults and
 bounds are enforced in one place.
 
-CLI-related settings (timeout, budget, max output tokens,
-thinking effort) are bundled by :meth:`ProjectSettings.to_cli_config`
-into a :class:`backend.cli.config.CliInvocationConfig` that handlers
-thread through the generation chain as a single kwarg. Adding a new
-CLI knob is a four-step change: field here, field on
-``CliInvocationConfig``, mapping in ``to_cli_config``, read in
-``backend.cli.manager``. No handler edits required.
+CLI-related settings (timeout, budget, max output tokens) were
+historically read by ``backend.cli.manager`` for the legacy
+generation chain. That chain retired with the v3 substrate; the
+fields stay on ``ProjectSettings`` as project-scoped knobs but
+have no live readers in this backend. Claude Code skills configure
+their own LLM invocations.
 
 Current settings:
 
@@ -62,7 +61,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from backend.cli.config import CliInvocationConfig
 from backend.models import Project
 
 
@@ -117,21 +115,6 @@ class ProjectSettings(BaseModel):
     model_config = {
         "extra": "ignore",  # drop unknown keys from old settings blobs
     }
-
-    def to_cli_config(self, *, thinking_effort: str | None = None) -> CliInvocationConfig:
-        """Bundle the CLI-relevant fields into a per-invocation config.
-
-        ``thinking_effort`` is the one tier-specific override —
-        callers pass ``"max"`` on the first three tiers (expansion,
-        reqs, sysarch) and leave it ``None`` on propagation tiers.
-        Every other CLI knob comes from the project settings row.
-        """
-        return CliInvocationConfig(
-            timeout_seconds=self.generation_timeout_seconds,
-            max_budget_usd=self.cli_max_budget_usd,
-            max_output_tokens=self.cli_max_output_tokens,
-            thinking_effort=thinking_effort,
-        )
 
 
 def get_project_settings(project: Project) -> ProjectSettings:

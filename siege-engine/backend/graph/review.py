@@ -34,12 +34,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.graph import queries
-from backend.graph.fanout import regen_job_for_node
 from backend.graph.reducer import rebuild_projections
 from backend.models.node import Node, StalenessLedger
 from backend.models.project import Project
 from backend.models.review import ProjectionSnapshot, ReviewBatch
-from backend.pipeline import queue as pipeline_queue
 
 
 def _mint_batch_id() -> str:
@@ -260,21 +258,13 @@ def accept_review(
         cleared += 1
     session.flush()
 
-    regen_job_ids: list[str] = []
-    if is_destructive and cleared > 0:
-        # Only enqueue on the first (effective) accept: when
-        # ``cleared`` is zero we either had nothing to clear or the
-        # ledger has already been processed. Prevents retries from
-        # piling up duplicate regens.
-        job = regen_job_for_node(project_id, node)
-        if job is not None:
-            job_type, payload = job
-            job_id = pipeline_queue.enqueue(session, job_type=job_type, payload=payload)
-            regen_job_ids.append(job_id)
-
+    # Pipeline retired: ``accept_review`` is now a clear-only op.
+    # Destructive accepts no longer auto-enqueue regen jobs (no
+    # handlers exist); follow up with the per-tier draft / review
+    # skill against the affected scope to re-articulate.
     return AcceptResult(
         cleared_count=cleared,
-        regen_job_ids=regen_job_ids,
+        regen_job_ids=[],
         is_destructive=is_destructive,
     )
 

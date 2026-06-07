@@ -234,8 +234,9 @@ class TestRebuildWipesLedger:
     """
 
     def test_rebuild_wipes_ledger_entries(self, db, project):
-        # Create two nodes with an inbound edge so a content commit
-        # produces a real staleness mark via fanout.
+        # Pre-existing ledger rows (left over from the legacy
+        # auto-fanout, now retired) must still be wiped by rebuild
+        # so a fresh projection has an empty ledger.
         append_event(
             db,
             project.id,
@@ -282,8 +283,22 @@ class TestRebuildWipesLedger:
         )
         db.flush()
 
+        # Inject a synthetic ledger row to simulate the legacy
+        # auto-fanout state. Auto-fanout retired with the pipeline
+        # queue, so we have to seed the row by hand.
+        db.add(
+            StalenessLedger(
+                project_id=project.id,
+                stale_node_id="comp_SRC00001",
+                source_node_id="comp_DST00001",
+                source_offset=42,
+                reason="content_changed",
+            )
+        )
+        db.flush()
+
         before = db.query(StalenessLedger).filter_by(project_id=project.id).count()
-        assert before >= 1, "fanout should have produced at least one mark"
+        assert before == 1
 
         rebuild_projections(db, project.id)
 

@@ -154,7 +154,10 @@ class TestAcceptReviewHelper:
         # No jobs enqueued.
         assert db.execute(select(Job)).scalars().all() == []
 
-    def test_destructive_enqueues_regen_for_accepted_node(self, db):
+    def test_destructive_accept_clears_ledger_no_regen(self, db):
+        # Post pipeline-retirement: destructive accepts no longer
+        # auto-enqueue regen jobs (no handlers exist). The clear-side
+        # bookkeeping still works.
         p, node_id = _seed_project_with_stale_comp(db, destructive=True)
         batch = open_review_batch(db, p.id)
         db.commit()
@@ -164,14 +167,8 @@ class TestAcceptReviewHelper:
 
         assert result.is_destructive is True
         assert result.cleared_count == 1
-        assert len(result.regen_job_ids) == 1
-
-        # The regen is a v2.generate_comparch for the node (top-level
-        # comp with parent_id=None).
-        jobs = db.execute(select(Job)).scalars().all()
-        assert len(jobs) == 1
-        assert jobs[0].job_type == "v2.generate_comparch"
-        assert jobs[0].payload["component_id"] == node_id
+        assert result.regen_job_ids == []
+        assert db.execute(select(Job)).scalars().all() == []
 
     def test_idempotent_second_accept_is_noop(self, db):
         p, node_id = _seed_project_with_stale_comp(db, destructive=True)
@@ -186,8 +183,8 @@ class TestAcceptReviewHelper:
         assert first.cleared_count == 1
         assert second.cleared_count == 0
         assert second.regen_job_ids == []
-        # Only the first accept enqueued a job.
-        assert len(db.execute(select(Job)).scalars().all()) == 1
+        # Pipeline retired: no enqueue side-effect on either pass.
+        assert db.execute(select(Job)).scalars().all() == []
 
     def test_rejects_node_not_in_project(self, db):
         p, _node_id = _seed_project_with_stale_comp(db, destructive=False)
@@ -220,7 +217,9 @@ class TestAcceptReviewRoute:
         assert body["is_destructive"] is False
         assert body["regen_job_ids"] == []
 
-    def test_post_destructive_enqueues_regen(self, db, client):
+    def test_post_destructive_clears_ledger_no_regen(self, db, client):
+        # Pipeline retired: destructive accept clears the ledger but
+        # the regen_job_ids list is always empty.
         p, node_id = _seed_project_with_stale_comp(db, destructive=True)
         opened = client.post(f"/api/projects/{p.id}/review/batches").json()
         resp = client.post(
@@ -229,7 +228,7 @@ class TestAcceptReviewRoute:
         assert resp.status_code == 200
         body = resp.json()
         assert body["is_destructive"] is True
-        assert len(body["regen_job_ids"]) == 1
+        assert body["regen_job_ids"] == []
 
     def test_post_rejects_missing_node(self, db, client):
         p, _ = _seed_project_with_stale_comp(db, destructive=False)
