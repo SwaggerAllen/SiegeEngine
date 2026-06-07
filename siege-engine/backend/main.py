@@ -186,7 +186,6 @@ from backend.github.oauth import router as github_router  # noqa: E402
 from backend.graph.debug_routes import router as debug_router  # noqa: E402
 from backend.graph.input_documents_routes import router as input_docs_router  # noqa: E402
 from backend.graph.jobs_routes import router as jobs_router  # noqa: E402
-from backend.graph.queue_routes import router as queue_router  # noqa: E402
 from backend.graph.references_git_routes import router as refs_git_router  # noqa: E402
 from backend.graph.routes import router as graph_router  # noqa: E402
 from backend.graph.vocabulary_git_routes import router as vocab_git_router  # noqa: E402
@@ -200,7 +199,6 @@ app.include_router(project_router, prefix="/api/projects", tags=["projects"])
 app.include_router(refs_git_router, prefix="/api/projects", tags=["references-git"])
 app.include_router(vocab_git_router, prefix="/api/projects", tags=["vocabulary-git"])
 app.include_router(graph_router, prefix="/api/projects", tags=["graph"])
-app.include_router(queue_router, prefix="/api/projects", tags=["queue"])
 app.include_router(jobs_router, prefix="/api/projects", tags=["jobs"])
 app.include_router(debug_router, prefix="/api/projects", tags=["debug"])
 app.include_router(input_docs_router, prefix="/api/projects", tags=["input-documents"])

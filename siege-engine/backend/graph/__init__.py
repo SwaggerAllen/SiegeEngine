@@ -1,25 +1,11 @@
-"""v2 structured model — events, reducer, queue, instructions, queries.
+"""v2 structured model — events, reducer, queries (read side).
 
-Every write to the structured model goes through
-:func:`backend.graph.reducer.append_event`. Every read goes through
-:mod:`backend.graph.queries`. Application code does not touch the
-projection ORM models directly.
+Reads go through :mod:`backend.graph.queries`. Application code does
+not touch the projection ORM models directly.
 
-Importing this package also registers the v2 job handlers:
-  * ``v2.apply_instructions``
-  * ``v2.rename_rewrite``
-
-Per-tier generation / mint / review handlers retired with the
-read-side rewrite; per-tier work happens in Claude Code skills now.
-Refs and vocab move through the v3 git-backed write endpoints (see
-``references_git_routes.py`` and ``vocabulary_git_routes.py``) plus
-the ``/create_ref`` / ``/create_vocab`` skills. Feature expansion's
-single-feature path retired alongside; the ``/propose_feature`` and
-``/add_feature`` skills drive the v3 substrate directly.
+This package no longer registers any job handlers. The legacy
+``v2.apply_instructions`` and ``v2.rename_rewrite`` handlers retired
+with the write pipeline; per-tier generation / review handlers
+retired earlier in the read-side rewrite. All authoring now happens
+through Claude Code skills against the v3 git substrate.
 """
-
-from backend.graph import queue as _queue
-from backend.graph.handlers import rename_rewrite as _rename_rewrite_handler
-
-_queue.register_apply_handler()
-_rename_rewrite_handler.register()
