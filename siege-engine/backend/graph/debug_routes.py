@@ -1,11 +1,14 @@
 """Project debug snapshot — single-shot read of every projection
-table + the recent event tail + the recent job log.
+table + the recent event tail + the (now frozen) job log.
 
 Designed to be the "copy this to a paste buffer" debugging tool:
-when something goes wrong (a bulk reset that does nothing, a job
-that disappears, a draft state mismatch), the user can dump the
-full project state into a JSON blob and either eyeball it or
-hand it back for diagnosis.
+when something goes wrong (a draft state mismatch, an unexpected
+projection row), the user can dump the full project state into a
+JSON blob and either eyeball it or hand it back for diagnosis.
+
+The recent_jobs tail surfaces pre-retirement Job rows (the
+pipeline that wrote them is gone); useful for historical context
+until the table itself drops in a follow-up migration.
 
 Cost note: this endpoint reads every node + edge + draft + recent
 events + recent jobs in a single transaction. For large projects
@@ -53,14 +56,15 @@ def get_debug_snapshot(
     _user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Dump the project's full state plus the most recent events
-    and jobs as a single JSON blob.
+    and (now frozen) jobs as a single JSON blob.
 
     Query parameters:
 
     - ``events`` — number of trailing GraphEvent rows to include
       (default 200). Capped at 2000.
-    - ``jobs`` — number of trailing Job rows (default 100).
-      Capped at 500.
+    - ``jobs`` — number of trailing Job rows to include (default
+      100). Capped at 500. Rows are pre-retirement only — no new
+      jobs land server-side.
     - ``staleness`` — number of StalenessLedger rows to include
       (default 200). Capped at 2000. Without a cap, a project with
       a large stale set can balloon the response past what the

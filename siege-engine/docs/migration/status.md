@@ -319,13 +319,53 @@ dashboards, supporting modules) is gone.
   `regen-feature-expansion-with-feedback` skills) see project
   input docs without server help.
 
+**Last write paths — DONE (one PR, four commits):**
+
+A. **Frontend cuts** — delete the 5 structural-edit panels
+   (`FeatRespEditorPanel`, `RespCompEditorPanel`,
+   `DecompositionEditorPanel` + `DecompositionGraphView`,
+   `DependencyEditorPanel` + `DependencyGraphView`,
+   `DomainParentEditorPanel` + `DomainParentGraphView`) +
+   `editors/graph/` shared infra +
+   `hooks/mutations/useQueueMutations.ts` +
+   `lib/queueAnnounce.ts` + `api/queue.ts`. NavDetail +
+   buildNavTree drop the 5 `EDIT_*` synthetic ids and the
+   Edit subtree.
+
+B. **Pending-instruction queue + rename rewriter** —
+   delete `backend/graph/queue_routes.py`,
+   `backend/graph/queue.py`,
+   `backend/graph/apply_instruction.py`,
+   `backend/graph/instructions.py` (17 instruction types),
+   `backend/graph/handlers/rename_rewrite.py`,
+   `backend/graph/prompts/rename_rewrite.py`. `broadcast.py`
+   loses the `Queue*` event types and `publish_queue_event`.
+   `backend/graph/__init__.py` no longer registers any
+   handlers. **No new `/rename_node` skill** — Rename in v3 =
+   "write feedback, invoke `/modify_<tier>`, then
+   `/propagate_downstream`".
+
+C. **CLI + pipeline + reducer write-wiring** — delete
+   `backend/cli/` (was 1 production caller after B),
+   `backend/pipeline/` (no live producers after B),
+   `backend/graph/fanout.py` (write-side dispatcher),
+   `backend/graph/jobs_routes.py`. Reducer drops the
+   `apply_staleness_changes` + `auto_enqueue_regens` block.
+   `review.accept_review` becomes a clear-only op (no regen
+   enqueue). `backend/main.py` drops the worker loop +
+   `jobs_router`. `to_cli_config` retires from
+   `backend/projects/settings.py`.
+
+D. **Alembic drop of `pending_instructions`, `views`,
+   `batches`** — model files deleted, `Job.batch_id` column +
+   FK gone. **`jobs` and `staleness_ledger` kept** —
+   write-frozen but still read by `skeleton_snapshot`,
+   `feedback_history`, `latest_generation_*` (jobs) and
+   `/structure` sidebar badges (staleness_ledger). A
+   follow-up can drop both once their FE consumers retire.
+
 **What still stands:**
 
-- `backend/graph/handlers/rename_rewrite.py` — used by the
-  apply-instruction (pending-edit) flow's only remaining
-  LLM-driven write path.
-- `backend/cli/manager.py` + `backend/pipeline/` — still needed by
-  apply-instruction.
 - Legacy persistence layer (SQLAlchemy + alembic + models) —
   untouched.
 
