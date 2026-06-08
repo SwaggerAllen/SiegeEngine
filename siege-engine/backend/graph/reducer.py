@@ -79,35 +79,14 @@ def append_event(session: Session, project_id: str, event: ev._EventBase) -> int
         session.rollback()
         raise
 
-    # Phase 9 — central staleness fanout. After the trigger event's
-    # projection delta lands, ask the fanout dispatcher what ledger
-    # changes (marks/clears) the trigger implies and apply them
-    # directly to the StalenessLedger table in the same transaction.
-    # Staleness is derived state — not an event-sourced primary
-    # projection — so no events land in the log for the mark/clear
-    # bookkeeping. This keeps the log canonical and replay clean
-    # (rebuild wipes the ledger; a freshly-rebuilt projection has
-    # no staleness because nothing has happened after rebuild yet).
-    #
-    # Local imports avoid circular backend.graph.fanout ↔ reducer
-    # and backend.pipeline.queue ↔ reducer during package init.
-    from backend.graph.fanout import (
-        apply_staleness_changes,
-        auto_enqueue_regens,
-        compute_staleness_changes,
-    )
-    from backend.pipeline import queue as pipeline_queue
-
-    changes = compute_staleness_changes(session, project_id, event, next_offset)
-    apply_staleness_changes(session, project_id, changes)
-
-    # Auto-enqueue regen jobs for non-destructive triggers.
-    # Destructive structural ops (delete/merge/split/promote/demote/
-    # reparent) halt the cascade — marks stay visible but no regen
-    # fires; the user reviews and kicks regen manually.
-    for job_type, payload in auto_enqueue_regens(session, project_id, event, changes):
-        pipeline_queue.enqueue(session, job_type=job_type, payload=payload)
-
+    # Phase 9's central staleness fanout + auto-enqueue regens
+    # retired with the pipeline queue. The StalenessLedger rows
+    # written before the retirement remain in the DB and are still
+    # consumed by ``backend.graph.staleness.stale_node_reasons`` to
+    # drive sidebar badges, but no new rows land — staleness goes
+    # write-frozen. Re-staleness signaling lives in the v3
+    # propagation records (``state/propagations/``), surfaced via
+    # the per-tier draft / review skills.
     stash_offset(session, next_offset)
     return next_offset
 

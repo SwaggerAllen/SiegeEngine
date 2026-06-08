@@ -217,36 +217,157 @@ hint; nothing auto-opens).
   edit a phase's `feature_ids` list. Assign strips the feat from
   any prior phase first (one-phase-per-feature invariant).
 
-## Phase 4 — Deletion sweep ⏸ NARROWED, IN PROGRESS
+## Phase 4 — Deletion sweep ✅ LARGELY LANDED
 
-See `docs/migration/deletion-inventory.md` for the punch list.
+See `docs/migration/deletion-inventory.md` for the original punch
+list. The bulk of Phase 4 landed across this branch — the
+dashboard's per-tier panels read from the substrate via siege, and
+the legacy backend's per-tier surface (handlers, routes,
+dashboards, supporting modules) is gone.
 
-The original Phase 4 design assumed the deployed dashboard could
-be fully repointed at `/siege/api/*` before the deletion sweep
-ran. Reality:
+**Frontend (read repoint + dead-code removal):**
 
-- The siege server is **already deployed** as part of
-  `backend/main.py` (mounted at `/siege`). No separate process.
-- The skills + plugin work end-to-end against a local repo.
-- The dashboard still calls legacy `/api/*` routes for **both**
-  reads and writes — that's the live blocker.
+- Siege `get_body` extended with `which='draft'|'review'` so the
+  read-only panels render both sides through one endpoint.
+- New `useScopeState` hook stitches `/get-state` + `/get-body` ×2
+  with conditional fetching.
+- 8 per-tier panels (RequirementsPanel / SysarchPanel /
+  FeatureExpansionPanel / ComparchPanel / SubcomparchPanel /
+  ImplPanel / FanInPanel + the shared BootstrapDraftPanel shell)
+  rewritten as v3 read-only views: status chip + draft body in
+  `<pre>` + review body when present + "Open in CC" skill-hint
+  footer. ~1500 LOC removed from these panels alone.
+- Dead frontend exports gone: 7 per-tier mutation hooks, 6
+  per-tier query hooks, 6 per-tier api modules, and their tests.
 
-The cleanup plan splits this into three loosely-coupled threads
-(see `/root/.claude/plans/pure-crafting-marshmallow.md`):
+**Backend (per-tier generation / review / mint / route deletion):**
 
-1. **Phase A (this commit)**: doc reconciliation.
-2. **Phase B**: frontend repoint of reads that have `/siege/api/*`
-   equivalents (graph, structure summary, review summary, plan,
-   batches, propagations, get-state, get-body).
-3. **Phase C**: backend deletion of the per-tier generation/review
-   stack (bootstrap routes, per-tier handlers, regen_context,
-   websocket, tier-ops write endpoints, cli/manager). ~5-8K LOC.
+- 7 per-tier generation handlers + 5 mint handlers + 7 review
+  handlers + 2 policy-application handlers — all gone.
+- `_tier_review.py`, `_bootstrap_review.py`, `_readiness.py`,
+  `review_context/*`, `prompts/review/*`, `prompts/<tier>.py`,
+  `regen_context.py` (1.5K LOC), `expansion.py` / `requirements.py`
+  / `sysarch.py`, `per_comp_reset.py` — all gone.
+- `tier_ops_routes.py` (Reset All / Regen From Reviews / etc.),
+  `cohort_routes.py`, `cohort_sampler.py`, `tier_structure.py`,
+  `review_summary.py` — all gone. Their router mounts came out of
+  `backend/main.py`.
+- `backend/graph/routes.py` shrunk from 4195 → 1700 LOC: every
+  per-tier endpoint block (EXPANSION/REQUIREMENTS/SYSARCH/
+  COMPARCH/SUBCOMPARCH/IMPL/FANIN configs + prompt-preview +
+  reset + review-retry + cancel) deleted.
+- `bootstrap_routes.py` slimmed from 996 → 689 LOC: dropped
+  `bootstrap_retry_review`, `wipe_node`, `bootstrap_reset`,
+  `bootstrap_prompt_preview`.
+- `backend/graph/__init__.py` drops 17 handler registrations;
+  only `rename_rewrite` survives alongside `apply_instructions`.
+  `generate_reference` retired with refs+vocab;
+  `expand_single_feature` retired with feature-expansion.
+- `backend/graph/running.py` rewritten as a refs-only
+  tracker — non-ref tier nodes don't get
+  generation_running/has_error badges anymore (the dashboard
+  is read-only for them).
+- `backend/projects/service.py` drops the auto-enqueue-on-create
+  path; new projects land with input doc and stop. Users kick off
+  generation via CC skills.
+- ~40 test files for the deleted per-tier surface — gone.
 
-**Deferred to a follow-up cleanup pass:** cohort / vocabulary /
-reference / human-review-batch / pending-instruction-queue /
-feedback-history backend modules. Their dashboard pages stay
-functional against `/api/*` this round; their backend (~20K LOC
-across models, alembic, reducer, pipeline, queries) stays alive.
+**Refs + vocab preservation pass — DONE:**
+
+- v3 git-backed routes (`references_git_routes.py` +
+  `vocabulary_git_routes.py`) handle all writes. Bodies live in
+  the project repo at `refs/<ref_id>/body.md` and
+  `vocab/<vocab_id>/body.md`; the server records git coordinates
+  and never calls the LLM.
+- `siege.cli create-ref` / `create-vocab` write the body file,
+  commit, push, and POST to register. Skills (`/create_ref`,
+  `/create_vocab`) shell out to the CLI.
+- Dashboard refs + vocab UI went read-only: `CreateReferenceDialog`
+  / `CreateVocabEntryDialog` deleted, panels rewritten without
+  mutation hooks, write methods stripped from
+  `api/references.ts` + `api/vocabulary.ts`.
+- Backend retirement: deleted `bootstrap_routes.py`,
+  `handlers/generate_reference.py`, `handlers/_tier_generation.py`,
+  `handlers/_bootstrap_generation.py`, `prompts/reference.py`,
+  `running.py`. Trimmed `routes.py` from 1806 → 1024 LOC (all
+  legacy ref/vocab write endpoints + `REFERENCE_CONFIG` removed).
+  Slimmed `references.py` + `vocabulary.py` to simple lookups
+  (LLM-prompt rendering helpers gone — context now built in the
+  v3 projection layer).
+- `fanout.py` drops the `tier == "ref"` regen-enqueue branch.
+  `backend/graph/__init__.py` no longer registers
+  `generate_reference`.
+- `pipeline/queue.py` drops the `TierDeferredError` handling +
+  `_complete_deferred_job_sync` (only used by `_tier_generation`).
+
+**Feature-expansion preservation pass — DONE:**
+
+- `expand_single_feature.py` handler + its prompt module deleted;
+  the legacy `ProposeFeature` instruction retired alongside.
+- `apply_instruction.dispatch_instruction` no longer half-async —
+  every branch emits events synchronously, the queue handler's
+  `defers_cascade` / `any_deferred` machinery is gone, and
+  `dispatch_instruction` returns `None`.
+- Dashboard `FeatRespEditorPanel` propose-feature dialog replaced
+  with a banner pointing at the new skills.
+- New `/propose_feature` Claude Code skill wraps an LLM around
+  `siege add-feature` so the chat-driven "user gives a one-liner
+  + skill canonicalizes name + intent" UX rides on the v3 substrate.
+- `siege.git_view.GitView.input_docs()` + a new `input_docs` key
+  on `feature_expansion`'s generation context bundle let the
+  skill (and the existing `draft-feature-expansion` /
+  `regen-feature-expansion-with-feedback` skills) see project
+  input docs without server help.
+
+**Last write paths — DONE (one PR, four commits):**
+
+A. **Frontend cuts** — delete the 5 structural-edit panels
+   (`FeatRespEditorPanel`, `RespCompEditorPanel`,
+   `DecompositionEditorPanel` + `DecompositionGraphView`,
+   `DependencyEditorPanel` + `DependencyGraphView`,
+   `DomainParentEditorPanel` + `DomainParentGraphView`) +
+   `editors/graph/` shared infra +
+   `hooks/mutations/useQueueMutations.ts` +
+   `lib/queueAnnounce.ts` + `api/queue.ts`. NavDetail +
+   buildNavTree drop the 5 `EDIT_*` synthetic ids and the
+   Edit subtree.
+
+B. **Pending-instruction queue + rename rewriter** —
+   delete `backend/graph/queue_routes.py`,
+   `backend/graph/queue.py`,
+   `backend/graph/apply_instruction.py`,
+   `backend/graph/instructions.py` (17 instruction types),
+   `backend/graph/handlers/rename_rewrite.py`,
+   `backend/graph/prompts/rename_rewrite.py`. `broadcast.py`
+   loses the `Queue*` event types and `publish_queue_event`.
+   `backend/graph/__init__.py` no longer registers any
+   handlers. **No new `/rename_node` skill** — Rename in v3 =
+   "write feedback, invoke `/modify_<tier>`, then
+   `/propagate_downstream`".
+
+C. **CLI + pipeline + reducer write-wiring** — delete
+   `backend/cli/` (was 1 production caller after B),
+   `backend/pipeline/` (no live producers after B),
+   `backend/graph/fanout.py` (write-side dispatcher),
+   `backend/graph/jobs_routes.py`. Reducer drops the
+   `apply_staleness_changes` + `auto_enqueue_regens` block.
+   `review.accept_review` becomes a clear-only op (no regen
+   enqueue). `backend/main.py` drops the worker loop +
+   `jobs_router`. `to_cli_config` retires from
+   `backend/projects/settings.py`.
+
+D. **Alembic drop of `pending_instructions`, `views`,
+   `batches`** — model files deleted, `Job.batch_id` column +
+   FK gone. **`jobs` and `staleness_ledger` kept** —
+   write-frozen but still read by `skeleton_snapshot`,
+   `feedback_history`, `latest_generation_*` (jobs) and
+   `/structure` sidebar badges (staleness_ledger). A
+   follow-up can drop both once their FE consumers retire.
+
+**What still stands:**
+
+- Legacy persistence layer (SQLAlchemy + alembic + models) —
+  untouched.
 
 ## Phase 5 — Optional polish ⏸ NOT STARTED
 
@@ -275,11 +396,13 @@ npx vite build
 
 ## Next gates (in order)
 
-1. **Phase B**: repoint the frontend's read paths at `/siege/api/*`.
-   Smoke-test on the deployed dashboard against a sample project.
-2. **Phase C**: drop the per-tier generation/review backend stack.
-   Per-commit verification per the gate above.
-3. **Future cleanup pass**: delete the deferred-feature backends
-   (cohort / vocab / reference / review-batch / queue / feedback
-   history) once the dashboard either drops those pages or grows
-   v3 equivalents.
+1. **Final backend shrink**: delete the apply-instruction /
+   pending-edit machinery if the dashboard's feature-proposal
+   flow follows refs to CC skills; delete the matching
+   feature-expansion + rename-rewrite handlers; delete
+   `backend/cli/`, `backend/pipeline/`.
+2. **Persistence retirement** (last): drop the SQLAlchemy
+   projections, alembic migrations, websocket, and the rest of
+   the SQL backend once no surviving endpoint reads or writes
+   them. End state matches `docs/migration/deletion-inventory.md`'s
+   "what survives" section.

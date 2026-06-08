@@ -55,7 +55,6 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.TIER_OPS,
       SYNTHETIC_IDS.COHORTS,
       SYNTHETIC_IDS.DEBUG,
-      SYNTHETIC_IDS.EDIT_ROOT,
     ]);
   });
 
@@ -78,7 +77,6 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.TIER_OPS,
       SYNTHETIC_IDS.COHORTS,
       SYNTHETIC_IDS.DEBUG,
-      SYNTHETIC_IDS.EDIT_ROOT,
     ]);
   });
 

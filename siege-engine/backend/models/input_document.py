@@ -26,6 +26,11 @@ class InputDocument(Base):
         String(50), default="reference"
     )  # reference | requirements | constraints
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # v3: body in git. body_sha + body_path point at the body blob in
+    # the project repo. ``content`` stays NOT NULL for legacy rows;
+    # readers prefer body_sha when set.
+    body_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    body_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

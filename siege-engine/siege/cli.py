@@ -1276,6 +1276,313 @@ def _add_ref_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ref", default="HEAD", help="git ref to read (default: HEAD)")
 
 
+def cmd_add_input_doc(args: argparse.Namespace) -> int:
+    """Write an input document into the project repo and register it.
+
+    Reads the content from ``--content-file``, writes it to the
+    bundle-declared path for the given role (default
+    ``inputs/<role>.md``), commits with a deterministic message,
+    optionally pushes, then POSTs the new (body_sha, body_path) to
+    the backend so the input_documents projection updates.
+
+    Prints a single JSON line with the registered doc's id +
+    body_sha so the caller can pipe.
+    """
+    from siege import backend_client
+    from siege.git_view import run_git
+
+    repo_root = Path(args.repo).resolve()
+    content_file = Path(args.content_file).resolve()
+    if not content_file.is_file():
+        print(f"error: content file does not exist: {content_file}", file=sys.stderr)
+        return 2
+
+    content = content_file.read_bytes()
+    role = args.role.strip()
+    if not role:
+        print("error: --role cannot be empty", file=sys.stderr)
+        return 2
+
+    body_path = args.body_path or f"inputs/{role}.md"
+    target = repo_root / body_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+    # Stage + commit. Push only if --no-push wasn't set.
+    run_git(["add", body_path], cwd=repo_root)
+    run_git(
+        ["commit", "-m", f"inputs: add {role} ({args.name})"],
+        cwd=repo_root,
+    )
+    body_sha = run_git(["rev-parse", "HEAD"], cwd=repo_root).strip()
+    if not args.no_push:
+        try:
+            run_git(["push"], cwd=repo_root)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"warning: git push failed ({exc}); backend will not see "
+                "the body until the branch is pushed",
+                file=sys.stderr,
+            )
+
+    try:
+        doc = backend_client.create_input_document(
+            project_id=args.project_id,
+            role=role,
+            name=args.name,
+            body_sha=body_sha,
+            body_path=body_path,
+        )
+    except backend_client.BackendError as exc:
+        print(f"error: backend registration failed: {exc}", file=sys.stderr)
+        return 3
+
+    print(
+        json.dumps(
+            {
+                "action": "add-input-doc",
+                "id": doc.get("id"),
+                "role": doc.get("doc_type"),
+                "name": doc.get("name"),
+                "body_sha": doc.get("body_sha"),
+                "body_path": doc.get("body_path"),
+            }
+        )
+    )
+    return 0
+
+
+def cmd_list_input_docs(args: argparse.Namespace) -> int:
+    """List a project's input documents via the backend."""
+    from siege import backend_client
+
+    try:
+        docs = backend_client.list_input_documents(args.project_id)
+    except backend_client.BackendError as exc:
+        print(f"error: backend list failed: {exc}", file=sys.stderr)
+        return 3
+    print(json.dumps({"input_documents": docs}))
+    return 0
+
+
+def cmd_create_ref(args: argparse.Namespace) -> int:
+    """Create a v3 git-backed reference node.
+
+    Mints a fresh ``ref_*`` id locally, writes the body to
+    ``refs/<ref_id>/body.md`` in the project repo, commits with a
+    deterministic message, optionally pushes, then POSTs to the
+    backend so the ref node + git coordinates land in the
+    projection. Prints a JSON line with the new ref's id +
+    body_sha so the caller can pipe.
+    """
+    from siege import backend_client
+    from siege.git_view import run_git
+
+    repo_root = Path(args.repo).resolve()
+    content_file = Path(args.content_file).resolve()
+    if not content_file.is_file():
+        print(f"error: content file does not exist: {content_file}", file=sys.stderr)
+        return 2
+
+    name = args.name.strip()
+    if not name:
+        print("error: --name cannot be empty", file=sys.stderr)
+        return 2
+
+    # Pre-check duplicates by name so the user can re-use an existing ref.
+    try:
+        existing = backend_client.get_reference_by_name(args.project_id, name)
+    except backend_client.BackendError as exc:
+        print(f"error: backend duplicate-name check failed: {exc}", file=sys.stderr)
+        return 3
+    if existing is not None and not args.allow_existing:
+        print(
+            f"error: a reference named {name!r} already exists "
+            f"(ref_id={existing['id']}); pass --allow-existing to use it",
+            file=sys.stderr,
+        )
+        return 4
+    if existing is not None:
+        # Idempotent: surface the existing ref id and return success.
+        print(
+            json.dumps(
+                {
+                    "action": "create-ref",
+                    "id": existing["id"],
+                    "name": existing["name"],
+                    "body_sha": existing.get("body_sha"),
+                    "body_path": existing.get("body_path"),
+                    "preexisting": True,
+                }
+            )
+        )
+        return 0
+
+    ref_id = backend_client.mint_id("ref")
+    content = content_file.read_bytes()
+    body_path = args.body_path or f"refs/{ref_id}/body.md"
+    target = repo_root / body_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+    run_git(["add", body_path], cwd=repo_root)
+    run_git(["commit", "-m", f"refs: add {name} ({ref_id})"], cwd=repo_root)
+    body_sha = run_git(["rev-parse", "HEAD"], cwd=repo_root).strip()
+    if not args.no_push:
+        try:
+            run_git(["push"], cwd=repo_root)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"warning: git push failed ({exc}); backend reads will 404 "
+                "until the branch is pushed",
+                file=sys.stderr,
+            )
+
+    try:
+        node = backend_client.create_git_reference(
+            project_id=args.project_id,
+            ref_id=ref_id,
+            name=name,
+            body_sha=body_sha,
+            body_path=body_path,
+        )
+    except backend_client.BackendError as exc:
+        print(f"error: backend registration failed: {exc}", file=sys.stderr)
+        return 3
+
+    print(
+        json.dumps(
+            {
+                "action": "create-ref",
+                "id": node.get("id"),
+                "name": node.get("name"),
+                "body_sha": node.get("body_sha"),
+                "body_path": node.get("body_path"),
+            }
+        )
+    )
+    return 0
+
+
+def cmd_list_refs(args: argparse.Namespace) -> int:
+    """List a project's references via the backend."""
+    from siege import backend_client
+
+    try:
+        refs = backend_client.list_references(args.project_id)
+    except backend_client.BackendError as exc:
+        print(f"error: backend list failed: {exc}", file=sys.stderr)
+        return 3
+    print(json.dumps({"references": refs}))
+    return 0
+
+
+def cmd_create_vocab(args: argparse.Namespace) -> int:
+    """Create a v3 git-backed vocab entry.
+
+    Mirrors ``create-ref`` — mint id locally, write body, commit,
+    push, register via backend.
+    """
+    from siege import backend_client
+    from siege.git_view import run_git
+
+    repo_root = Path(args.repo).resolve()
+    content_file = Path(args.content_file).resolve()
+    if not content_file.is_file():
+        print(f"error: content file does not exist: {content_file}", file=sys.stderr)
+        return 2
+
+    name = args.name.strip()
+    if not name:
+        print("error: --name cannot be empty", file=sys.stderr)
+        return 2
+
+    try:
+        existing = backend_client.get_vocab_by_name(args.project_id, name)
+    except backend_client.BackendError as exc:
+        print(f"error: backend duplicate-name check failed: {exc}", file=sys.stderr)
+        return 3
+    if existing is not None and not args.allow_existing:
+        print(
+            f"error: a vocab entry named {name!r} already exists "
+            f"(vocab_id={existing['id']}); pass --allow-existing to use it",
+            file=sys.stderr,
+        )
+        return 4
+    if existing is not None:
+        print(
+            json.dumps(
+                {
+                    "action": "create-vocab",
+                    "id": existing["id"],
+                    "name": existing["name"],
+                    "body_sha": existing.get("body_sha"),
+                    "body_path": existing.get("body_path"),
+                    "preexisting": True,
+                }
+            )
+        )
+        return 0
+
+    vocab_id = backend_client.mint_id("vocab")
+    content = content_file.read_bytes()
+    body_path = args.body_path or f"vocab/{vocab_id}/body.md"
+    target = repo_root / body_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+    run_git(["add", body_path], cwd=repo_root)
+    run_git(["commit", "-m", f"vocab: add {name} ({vocab_id})"], cwd=repo_root)
+    body_sha = run_git(["rev-parse", "HEAD"], cwd=repo_root).strip()
+    if not args.no_push:
+        try:
+            run_git(["push"], cwd=repo_root)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"warning: git push failed ({exc}); backend reads will 404 "
+                "until the branch is pushed",
+                file=sys.stderr,
+            )
+
+    try:
+        node = backend_client.create_git_vocab(
+            project_id=args.project_id,
+            vocab_id=vocab_id,
+            name=name,
+            body_sha=body_sha,
+            body_path=body_path,
+        )
+    except backend_client.BackendError as exc:
+        print(f"error: backend registration failed: {exc}", file=sys.stderr)
+        return 3
+
+    print(
+        json.dumps(
+            {
+                "action": "create-vocab",
+                "id": node.get("id"),
+                "name": node.get("name"),
+                "body_sha": node.get("body_sha"),
+                "body_path": node.get("body_path"),
+            }
+        )
+    )
+    return 0
+
+
+def cmd_list_vocab(args: argparse.Namespace) -> int:
+    """List a project's vocab entries via the backend."""
+    from siege import backend_client
+
+    try:
+        entries = backend_client.list_vocab(args.project_id)
+    except backend_client.BackendError as exc:
+        print(f"error: backend list failed: {exc}", file=sys.stderr)
+        return 3
+    print(json.dumps({"vocabulary": entries}))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="siege.cli")
     subs = p.add_subparsers(dest="cmd", required=True)
@@ -1592,6 +1899,100 @@ def build_parser() -> argparse.ArgumentParser:
         help="filter by rolled-up status",
     )
     p_lp.set_defaults(func=cmd_list_propagations)
+
+    p_aid = subs.add_parser(
+        "add-input-doc",
+        help="register a git-resident input document on the backend",
+    )
+    p_aid.add_argument("--repo", default=".", help="path to the project repo (default: cwd)")
+    p_aid.add_argument("--project-id", dest="project_id", required=True)
+    p_aid.add_argument(
+        "--role", required=True, help="bundle-declared input role (e.g. project_doc)"
+    )
+    p_aid.add_argument("--name", required=True, help="human-readable name for the doc")
+    p_aid.add_argument(
+        "--content-file", dest="content_file", required=True, help="path to the body content"
+    )
+    p_aid.add_argument(
+        "--body-path",
+        dest="body_path",
+        default=None,
+        help="path inside the project repo to write to (default: inputs/<role>.md)",
+    )
+    p_aid.add_argument(
+        "--no-push",
+        dest="no_push",
+        action="store_true",
+        help="skip the git push (for local-only testing)",
+    )
+    p_aid.set_defaults(func=cmd_add_input_doc)
+
+    p_lid = subs.add_parser("list-input-docs", help="list a project's input documents")
+    p_lid.add_argument("--project-id", dest="project_id", required=True)
+    p_lid.set_defaults(func=cmd_list_input_docs)
+
+    p_cr = subs.add_parser(
+        "create-ref",
+        help="create a v3 git-backed reference (write body, commit, push, register)",
+    )
+    p_cr.add_argument("--repo", default=".", help="path to the project repo (default: cwd)")
+    p_cr.add_argument("--project-id", dest="project_id", required=True)
+    p_cr.add_argument("--name", required=True, help="human-readable ref name")
+    p_cr.add_argument(
+        "--content-file", dest="content_file", required=True, help="path to the body content"
+    )
+    p_cr.add_argument(
+        "--body-path",
+        dest="body_path",
+        default=None,
+        help="repo-relative path to write to (default: refs/<ref_id>/body.md)",
+    )
+    p_cr.add_argument(
+        "--no-push",
+        dest="no_push",
+        action="store_true",
+        help="skip the git push (for local-only testing)",
+    )
+    p_cr.add_argument(
+        "--allow-existing",
+        dest="allow_existing",
+        action="store_true",
+        help="if a ref with the same name exists, return its id instead of erroring",
+    )
+    p_cr.set_defaults(func=cmd_create_ref)
+
+    p_lr = subs.add_parser("list-refs", help="list a project's references")
+    p_lr.add_argument("--project-id", dest="project_id", required=True)
+    p_lr.set_defaults(func=cmd_list_refs)
+
+    p_cv = subs.add_parser(
+        "create-vocab",
+        help="create a v3 git-backed vocab entry (write body, commit, push, register)",
+    )
+    p_cv.add_argument("--repo", default=".", help="path to the project repo (default: cwd)")
+    p_cv.add_argument("--project-id", dest="project_id", required=True)
+    p_cv.add_argument("--name", required=True, help="vocab term name")
+    p_cv.add_argument(
+        "--content-file", dest="content_file", required=True, help="path to the body content"
+    )
+    p_cv.add_argument(
+        "--body-path",
+        dest="body_path",
+        default=None,
+        help="repo-relative path to write to (default: vocab/<vocab_id>/body.md)",
+    )
+    p_cv.add_argument("--no-push", dest="no_push", action="store_true", help="skip the git push")
+    p_cv.add_argument(
+        "--allow-existing",
+        dest="allow_existing",
+        action="store_true",
+        help="return an existing entry's id instead of erroring on name duplicate",
+    )
+    p_cv.set_defaults(func=cmd_create_vocab)
+
+    p_lv = subs.add_parser("list-vocab", help="list a project's vocabulary entries")
+    p_lv.add_argument("--project-id", dest="project_id", required=True)
+    p_lv.set_defaults(func=cmd_list_vocab)
 
     return p
 

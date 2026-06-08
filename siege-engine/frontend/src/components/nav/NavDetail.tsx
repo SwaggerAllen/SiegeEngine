@@ -30,11 +30,6 @@ import { SysarchPanel } from '../SysarchPanel';
 import { V3BodyPanel } from '../V3BodyPanel';
 import { VocabularyList } from '../VocabularyList';
 import { useProject } from '../../hooks/queries/useProjectQueries';
-import { DecompositionEditorPanel } from '../editors/DecompositionEditorPanel';
-import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
-import { DomainParentEditorPanel } from '../editors/DomainParentEditorPanel';
-import { FeatRespEditorPanel } from '../editors/FeatRespEditorPanel';
-import { RespCompEditorPanel } from '../editors/RespCompEditorPanel';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -127,44 +122,6 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
         <DebugPanel projectId={projectId} />
       </div>
     );
-  }
-  if (selectedId === SYNTHETIC_IDS.EDIT_DEPS) {
-    return (
-      <div className="h-full overflow-auto">
-        <DependencyEditorPanel projectId={projectId} />
-      </div>
-    );
-  }
-  if (selectedId === SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS) {
-    return (
-      <div className="h-full overflow-auto">
-        <DomainParentEditorPanel projectId={projectId} />
-      </div>
-    );
-  }
-  if (selectedId === SYNTHETIC_IDS.EDIT_DECOMPOSITION) {
-    return (
-      <div className="h-full overflow-auto">
-        <DecompositionEditorPanel projectId={projectId} />
-      </div>
-    );
-  }
-  if (selectedId === SYNTHETIC_IDS.EDIT_FEAT_RESP) {
-    return (
-      <div className="h-full overflow-auto">
-        <FeatRespEditorPanel projectId={projectId} />
-      </div>
-    );
-  }
-  if (selectedId === SYNTHETIC_IDS.EDIT_RESP_COMP) {
-    return (
-      <div className="h-full overflow-auto">
-        <RespCompEditorPanel projectId={projectId} />
-      </div>
-    );
-  }
-  if (selectedId === SYNTHETIC_IDS.EDIT_ROOT) {
-    return <EditorComingSoon id={selectedId} />;
   }
   if (
     selectedId === SYNTHETIC_IDS.FEATURE_EXPANSION ||
@@ -436,20 +393,3 @@ function QueueRetired() {
   );
 }
 
-function EditorComingSoon({ id }: { id: string }) {
-  // Landing page for the Edit-group root node. Individual editors
-  // route to their own panels.
-  const label = id === SYNTHETIC_IDS.EDIT_ROOT ? 'Edit' : 'Editor';
-  return (
-    <div className="h-full flex items-center justify-center p-8 text-center max-w-md mx-auto">
-      <div>
-        <h2 className="text-sm font-semibold text-gray-300 mb-2">{label}</h2>
-        <p className="text-sm text-gray-400">
-          Select an editor from the sidebar: Features → Responsibilities,
-          Responsibilities → Components, Decomposition, Subresps →
-          Subcomponents, Dependencies, or Domain Parents.
-        </p>
-      </div>
-    </div>
-  );
-}

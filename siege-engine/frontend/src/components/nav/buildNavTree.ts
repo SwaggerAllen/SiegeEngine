@@ -88,14 +88,6 @@ export const SYNTHETIC_IDS = {
   COHORTS: ':cohorts',
   // Debug snapshot — copy project state + recent events/jobs.
   DEBUG: ':debug',
-  // Phase 11 structured-edit UIs. Each synthetic id routes to a
-  // dedicated editor page in NavDetail.
-  EDIT_ROOT: ':edit',
-  EDIT_DEPS: ':edit-dependencies',
-  EDIT_DOMAIN_PARENTS: ':edit-domain-parents',
-  EDIT_DECOMPOSITION: ':edit-decomposition',
-  EDIT_FEAT_RESP: ':edit-feat-resp',
-  EDIT_RESP_COMP: ':edit-resp-comp',
   COMPONENTS_ROOT: ':components',
   // Upload-imported projects don't have legacy substrate-root nodes
   // (tier='expansion'/'reqs'/'sysarch' rows in the SQL store) — the
@@ -321,55 +313,6 @@ export function buildNavTree(
     node: null,
     role: 'debug',
     children: [],
-    status: { ...EMPTY_STATUS },
-  });
-  items.push({
-    id: SYNTHETIC_IDS.EDIT_ROOT,
-    label: 'Edit',
-    node: null,
-    role: 'edit-root',
-    children: [
-      {
-        id: SYNTHETIC_IDS.EDIT_FEAT_RESP,
-        label: 'Features → Responsibilities',
-        node: null,
-        role: 'edit-feat-resp',
-        children: [],
-        status: { ...EMPTY_STATUS },
-      },
-      {
-        id: SYNTHETIC_IDS.EDIT_RESP_COMP,
-        label: 'Responsibilities → Components',
-        node: null,
-        role: 'edit-resp-comp',
-        children: [],
-        status: { ...EMPTY_STATUS },
-      },
-      {
-        id: SYNTHETIC_IDS.EDIT_DECOMPOSITION,
-        label: 'Decomposition',
-        node: null,
-        role: 'edit-decomposition',
-        children: [],
-        status: { ...EMPTY_STATUS },
-      },
-      {
-        id: SYNTHETIC_IDS.EDIT_DEPS,
-        label: 'Dependencies',
-        node: null,
-        role: 'edit-dependencies',
-        children: [],
-        status: { ...EMPTY_STATUS },
-      },
-      {
-        id: SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS,
-        label: 'Domain Parents',
-        node: null,
-        role: 'edit-domain-parents',
-        children: [],
-        status: { ...EMPTY_STATUS },
-      },
-    ],
     status: { ...EMPTY_STATUS },
   });
 

@@ -128,6 +128,14 @@ class Node(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # v3: optional git-backed body. When set, body content lives at
+    # ``body_path`` in the project repo at sha ``body_sha`` and the
+    # ``content`` column carries a sentinel (kept NOT NULL for
+    # legacy callers). Readers prefer git when body_sha is set;
+    # legacy rows (body_sha NULL) continue reading from content.
+    # Used today for ref nodes; vocab + others will follow.
+    body_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    body_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Optional grouping label, currently used only by feat_* nodes
     # minted from an approved <features> expansion containing
     # <group> blocks. Null for ungrouped features and for all

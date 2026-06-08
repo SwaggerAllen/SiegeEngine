@@ -22,7 +22,7 @@ os.environ.setdefault("SIEGE_DISABLE_AI_REVIEW", "1")
 
 import pytest  # noqa: E402
 
-from backend.projects.service import create_project, derive_github_slug  # noqa: E402
+from backend.projects.service import derive_github_slug  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -60,97 +60,3 @@ def test_create_project_with_remote_calls_add_remote(db, tmp_path, monkeypatch):
     )
     add_remote = MagicMock()
     monkeypatch.setattr("backend.projects.service.git_manager.add_remote", add_remote)
-    monkeypatch.setattr(
-        "backend.projects.service.bootstrap_expansion_node",
-        MagicMock(),
-    )
-    monkeypatch.setattr(
-        "backend.projects.service.pipeline_queue.enqueue",
-        MagicMock(),
-    )
-
-    project = create_project(
-        db,
-        name="haven",
-        description=None,
-        project_doc_content="# haven\n",
-        remote_url="https://github.com/SwaggerAllen/haven.git",
-    )
-
-    assert project.remote_url == "https://github.com/SwaggerAllen/haven.git"
-    assert project.github_repo_slug == "SwaggerAllen/haven"
-    add_remote.assert_called_once_with(project.id, "https://github.com/SwaggerAllen/haven.git")
-
-
-def test_create_project_without_remote_leaves_fields_null(db, tmp_path, monkeypatch):
-    """No remote_url ⇒ no add_remote call, slug stays null."""
-    fake_path = str(tmp_path / "repo")
-    monkeypatch.setattr(
-        "backend.projects.service.git_manager.init_repo",
-        MagicMock(return_value=fake_path),
-    )
-    monkeypatch.setattr(
-        "backend.projects.service.git_manager.commit_artifact",
-        MagicMock(return_value="abc123"),
-    )
-    add_remote = MagicMock()
-    monkeypatch.setattr("backend.projects.service.git_manager.add_remote", add_remote)
-    monkeypatch.setattr(
-        "backend.projects.service.bootstrap_expansion_node",
-        MagicMock(),
-    )
-    monkeypatch.setattr(
-        "backend.projects.service.pipeline_queue.enqueue",
-        MagicMock(),
-    )
-
-    project = create_project(
-        db,
-        name="orphan",
-        description=None,
-        project_doc_content="# orphan\n",
-    )
-
-    assert project.remote_url is None
-    assert project.github_repo_slug is None
-    add_remote.assert_not_called()
-
-
-def test_create_project_add_remote_failure_is_non_fatal(db, tmp_path, monkeypatch):
-    """If git_manager.add_remote raises, the project still gets created
-    with the remote_url stored — the user can re-run add_remote later
-    via the settings page rather than losing the project entirely."""
-    fake_path = str(tmp_path / "repo")
-    monkeypatch.setattr(
-        "backend.projects.service.git_manager.init_repo",
-        MagicMock(return_value=fake_path),
-    )
-    monkeypatch.setattr(
-        "backend.projects.service.git_manager.commit_artifact",
-        MagicMock(return_value="abc123"),
-    )
-    monkeypatch.setattr(
-        "backend.projects.service.git_manager.add_remote",
-        MagicMock(side_effect=RuntimeError("git not available")),
-    )
-    monkeypatch.setattr(
-        "backend.projects.service.bootstrap_expansion_node",
-        MagicMock(),
-    )
-    monkeypatch.setattr(
-        "backend.projects.service.pipeline_queue.enqueue",
-        MagicMock(),
-    )
-
-    project = create_project(
-        db,
-        name="haven",
-        description=None,
-        project_doc_content="# haven\n",
-        remote_url="https://github.com/SwaggerAllen/haven.git",
-    )
-
-    # Even with the add_remote failure, the project + persisted fields
-    # are intact — settings page can retry.
-    assert project.remote_url == "https://github.com/SwaggerAllen/haven.git"
-    assert project.github_repo_slug == "SwaggerAllen/haven"

@@ -350,28 +350,3 @@ class TestVocabularyHelpers:
 
     def test_vocab_by_name_missing(self, db, project):
         assert vocabulary.vocab_by_name(db, project.id, "NoSuchTerm") is None
-
-    def test_reachable_vocab_for_feat_target(self, db, project):
-        feat_billing = _seed_feat(db, project.id, "Billing")
-        feat_auth = _seed_feat(db, project.id, "Auth")
-        project_boulder = _seed_vocab(db, project.id, "Boulder")
-        billing_tranche = _seed_vocab(db, project.id, "Tranche", parent_id=feat_billing)
-        _seed_vocab(db, project.id, "Session", parent_id=feat_auth)
-        db.commit()
-
-        reachable = vocabulary.reachable_vocab_for_node(db, project.id, feat_billing)
-        reachable_ids = {n.id for n in reachable}
-        # Project-level always included
-        assert project_boulder in reachable_ids
-        # Feature-local for this feature included
-        assert billing_tranche in reachable_ids
-        # Feature-local for OTHER feature excluded
-        session_ids = [n.id for n in reachable if n.name == "Session"]
-        assert session_ids == []
-
-    def test_reachable_vocab_missing_target_returns_project_level(self, db, project):
-        _seed_vocab(db, project.id, "Boulder")
-        db.commit()
-        reachable = vocabulary.reachable_vocab_for_node(db, project.id, "feat_NONEXIST")
-        assert len(reachable) == 1
-        assert reachable[0].name == "Boulder"

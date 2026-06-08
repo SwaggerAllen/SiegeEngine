@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -11,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.database import SessionLocal, engine, init_db
-from backend.pipeline import queue as pipeline_queue
 
 # Configure logging for the whole backend
 logging.basicConfig(
@@ -42,41 +40,11 @@ async def lifespan(app: FastAPI):
     # Log database diagnostics so we can tell if the volume mounted correctly
     _log_db_diagnostics()
 
-    # Start the pipeline job-queue worker loop unless disabled.
-    # Tests set SIEGE_DISABLE_WORKER_LOOP=1 to drive handlers inline.
-    worker_task: asyncio.Task | None = None
-    if os.environ.get("SIEGE_DISABLE_WORKER_LOOP"):
-        logger.info("SIEGE_DISABLE_WORKER_LOOP set — pipeline worker loop not started")
-    else:
-        # Reap any rows left in ``status="running"`` from a previous
-        # process death. The new worker has no continuation for them,
-        # so they're tombstones — flip to ``cancelled`` so the
-        # resume-tier flow can pick them back up.
-        from backend.database import SessionLocal as _SessionLocal
-
-        _reap_db = _SessionLocal()
-        try:
-            pipeline_queue.reap_orphaned_running_jobs(_reap_db)
-        finally:
-            _reap_db.close()
-        worker_task = asyncio.create_task(pipeline_queue.worker_loop())
-        logger.info("Pipeline worker loop started")
+    # The legacy pipeline worker loop retired with the
+    # apply-instruction queue + rename rewriter. Authoring lives in
+    # Claude Code skills now; no background jobs run server-side.
 
     yield
-
-    # Signal the worker loop to stop and wait briefly for it to drain.
-    if worker_task is not None:
-        logger.info("Shutting down — stopping pipeline worker loop...")
-        pipeline_queue.shutdown_worker()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5)
-        except asyncio.TimeoutError:
-            logger.warning("Pipeline worker did not stop in 5s; cancelling")
-            worker_task.cancel()
-            try:
-                await worker_task
-            except (asyncio.CancelledError, Exception):
-                pass
 
     # Graceful shutdown: checkpoint WAL so all data is in the main DB file
     # This prevents data loss when Fly.io stops the machine during deploys
@@ -183,22 +151,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 import backend.graph  # noqa: E402,F401
 from backend.auth.routes import router as auth_router  # noqa: E402
 from backend.github.oauth import router as github_router  # noqa: E402
-from backend.graph.cohort_routes import router as cohort_router  # noqa: E402
 from backend.graph.debug_routes import router as debug_router  # noqa: E402
-from backend.graph.jobs_routes import router as jobs_router  # noqa: E402
-from backend.graph.queue_routes import router as queue_router  # noqa: E402
+from backend.graph.input_documents_routes import router as input_docs_router  # noqa: E402
+from backend.graph.references_git_routes import router as refs_git_router  # noqa: E402
 from backend.graph.routes import router as graph_router  # noqa: E402
-from backend.graph.tier_ops_routes import router as tier_ops_router  # noqa: E402
+from backend.graph.vocabulary_git_routes import router as vocab_git_router  # noqa: E402
 from backend.projects.routes import router as project_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(project_router, prefix="/api/projects", tags=["projects"])
+# *_git routers must mount before graph_router: their /by-name
+# routes would otherwise be shadowed by routes.py's /{id}
+# patterns (FastAPI matches in registration order).
+app.include_router(refs_git_router, prefix="/api/projects", tags=["references-git"])
+app.include_router(vocab_git_router, prefix="/api/projects", tags=["vocabulary-git"])
 app.include_router(graph_router, prefix="/api/projects", tags=["graph"])
-app.include_router(queue_router, prefix="/api/projects", tags=["queue"])
-app.include_router(tier_ops_router, prefix="/api/projects", tags=["tier-ops"])
-app.include_router(cohort_router, prefix="/api/projects", tags=["cohorts"])
-app.include_router(jobs_router, prefix="/api/projects", tags=["jobs"])
 app.include_router(debug_router, prefix="/api/projects", tags=["debug"])
+app.include_router(input_docs_router, prefix="/api/projects", tags=["input-documents"])
 app.include_router(github_router, prefix="/api/github", tags=["github"])
 
 # Mount the siege read API — the dashboard's read-only projection of

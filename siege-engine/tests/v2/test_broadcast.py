@@ -24,7 +24,6 @@ from backend.graph.broadcast import (
     ProjectBroadcaster,
     _node_ids_for_event,
     commit_and_publish,
-    publish_queue_event,
     reset_broadcaster_for_tests,
 )
 from backend.graph.reducer import append_event
@@ -105,19 +104,6 @@ class TestNodeIdsForEvent:
 
     def test_unknown_event_returns_empty(self):
         assert _node_ids_for_event("MadeUp", {"foo": "bar"}) == ()
-
-    def test_queue_state_events_return_empty_node_ids(self):
-        for et in (
-            "QueueInstructionAppended",
-            "QueueInstructionDiscarded",
-            "QueueApplying",
-            "QueueFailed",
-        ):
-            assert _node_ids_for_event(et, {}) == ()
-
-    def test_queue_applied_reads_node_ids_from_payload(self):
-        out = _node_ids_for_event("QueueApplied", {"node_ids": ["comp_A", "comp_B"]})
-        assert set(out) == {"comp_A", "comp_B"}
 
 
 class TestPublishSubscribe:
@@ -305,82 +291,3 @@ class TestCommitAndPublish:
         finally:
             reset_broadcaster_for_tests()
         assert len(captured) == 1
-
-
-class TestPublishQueueEvent:
-    """Phase 11 ephemeral queue-state publishing."""
-
-    def test_publishes_with_negative_offset(self):
-        captured: list[BroadcastMessage] = []
-        import backend.graph.broadcast as broadcast_mod
-
-        broadcast_mod.get_broadcaster().publish = lambda _pid, msg: captured.append(msg)  # type: ignore[method-assign]
-        try:
-            publish_queue_event("p1", "QueueInstructionAppended")
-        finally:
-            reset_broadcaster_for_tests()
-        assert len(captured) == 1
-        assert captured[0].event_type == "QueueInstructionAppended"
-        # Offset must be negative so it never collides with a real
-        # graph_events offset (those start at 1).
-        assert captured[0].offset < 0
-        assert captured[0].node_ids == ()
-
-    def test_queue_applied_carries_node_ids(self):
-        captured: list[BroadcastMessage] = []
-        import backend.graph.broadcast as broadcast_mod
-
-        broadcast_mod.get_broadcaster().publish = lambda _pid, msg: captured.append(msg)  # type: ignore[method-assign]
-        try:
-            publish_queue_event("p1", "QueueApplied", node_ids=("comp_A", "comp_B"))
-        finally:
-            reset_broadcaster_for_tests()
-        assert len(captured) == 1
-        assert captured[0].event_type == "QueueApplied"
-        assert set(captured[0].node_ids) == {"comp_A", "comp_B"}
-
-    def test_swallows_publish_failure(self, caplog):
-        """Broadcast failures must never bubble back to the caller."""
-        import backend.graph.broadcast as broadcast_mod
-
-        def _raise(_pid, _msg):
-            raise RuntimeError("simulated broadcast failure")
-
-        broadcast_mod.get_broadcaster().publish = _raise  # type: ignore[method-assign]
-        try:
-            # Should not raise, just log.
-            publish_queue_event("p1", "QueueApplying")
-        finally:
-            reset_broadcaster_for_tests()
-
-    def test_ring_buffer_replay_drops_queue_events(self):
-        """Queue events use offset=-1, so ``since=<N>`` replay naturally skips them."""
-        b = ProjectBroadcaster()
-        b.publish(
-            "p1",
-            BroadcastMessage(offset=-1, event_type="QueueApplying", node_ids=()),
-        )
-        b.publish(
-            "p1",
-            BroadcastMessage(offset=5, event_type="NodeCreated", node_ids=("x",)),
-        )
-
-        async def _drain_replay() -> list[BroadcastMessage]:
-            gen = b.subscribe("p1", since_offset=0)
-            received: list[BroadcastMessage] = []
-            # Replay is synchronous in subscribe() before it awaits live —
-            # anext() returns the next buffered live message. Collect the
-            # two ring-buffer replays first.
-            for _ in range(1):
-                try:
-                    received.append(await asyncio.wait_for(anext(gen), timeout=0.1))
-                except asyncio.TimeoutError:
-                    break
-            await gen.aclose()
-            return received
-
-        received = asyncio.run(_drain_replay())
-        # Only the offset=5 NodeCreated replayed; the offset=-1 queue
-        # event was skipped by the ``offset > since`` filter.
-        assert len(received) == 1
-        assert received[0].event_type == "NodeCreated"

@@ -415,6 +415,27 @@ class GitView:
     def body_sha256(self, path: str) -> str:
         return sha256_bytes(self.read_body(path))
 
+    def input_docs(self) -> dict[str, str]:
+        """Return ``{role: body_text}`` for every ``inputs/<role>.md`` file.
+
+        Mirrors the ``siege add-input-doc`` convention: role is the
+        filename stem, content is the body text. Empty dict when no
+        ``inputs/`` directory exists. Tiers that consume raw input
+        (feature expansion, requirements, sysarch) read this.
+        """
+        out: dict[str, str] = {}
+        for path in self.clone.ls_tree(self.head_sha, "inputs/"):
+            if not path.endswith(".md"):
+                continue
+            stem = path[len("inputs/") : -len(".md")]
+            if not stem:
+                continue
+            try:
+                out[stem] = self.read_body_text(path)
+            except Exception:
+                continue
+        return out
+
     def drift_for(self, state: State) -> dict[str, str] | None:
         """Return a drift descriptor if the body's actual sha doesn't match state JSON."""
         if not state.draft:

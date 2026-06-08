@@ -4,9 +4,8 @@ import { useProjectStructure } from './useProjectStructure';
 /**
  * Light wrapper over :func:`useProjectStructure` that derives the
  * feature list from the project's structure snapshot. Kept as a
- * named hook so consumers (``RequirementsPanel``,
- * ``CreateVocabEntryDialog``) don't need to know the projection
- * shape.
+ * named hook so consumers (``RequirementsPanel``) don't need to
+ * know the projection shape.
  *
  * Previously this hook hit a dedicated ``/features`` GET and
  * polled during mint. Now the SSE stream triggers structure
