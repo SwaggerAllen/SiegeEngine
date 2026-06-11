@@ -294,9 +294,7 @@ commit. No server, no token. Common snags:
 ### The dashboard
 
 The dashboard at `siege.strutco.io` reads your project's git state to
-render the graph + tier views. Two pieces of auth back it — the
-**Auth diagnostic** panel near the top of this page checks both when
-you're logged in:
+render the graph + tier views. Two pieces of auth back it:
 
 - **Signed in (JWT)** — the dashboard's read API requires a bearer
   token. The **Your dev token** panel at the top of this page shows
@@ -308,9 +306,6 @@ you're logged in:
   or the clone fails with "Clone of `<repo>` requires
   authentication". Connect via **Project Settings → GitHub
   connection** on any project.
-
-The "refresh" button on the diagnostic panel re-runs the checks
-without reloading.
 
 ## Common gotchas
 

@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import Markdown from 'react-markdown';
-import AuthDebugPanel from '../components/AuthDebugPanel';
 import DevTokenPanel from '../components/DevTokenPanel';
 // Vite's `?raw` import bundles the markdown source as a string at
 // build time. The file lives under frontend/src/content/ so it's
@@ -35,11 +34,6 @@ export default function CheatsheetPage() {
       </header>
       <main className="max-w-4xl mx-auto px-6 py-8">
         <DevTokenPanel />
-        {/* AuthDebugPanel renders right under the token export so a
-            user troubleshooting "why are my MCP clones failing?" sees
-            the three load-bearing checks (JWT sub, dashboard /auth/me,
-            GitHub connection) without leaving this page. */}
-        <AuthDebugPanel />
         <article className="prose prose-invert prose-sm max-w-none">
           <Markdown>{cheatsheetMarkdown}</Markdown>
         </article>
